@@ -97,6 +97,16 @@ def git_push(commit_message: str = None) -> dict:
     try:
         logs = []
 
+        # Xác định branch hiện tại (main hoặc master)
+        branch_result = subprocess.run(
+            ["git", "-c", "safe.directory=*", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=PROJECT_ROOT,
+            capture_output=True, text=True, encoding="utf-8", timeout=10
+        )
+        current_branch = branch_result.stdout.strip() or "main"
+        if current_branch == "HEAD":
+            current_branch = "main"
+
         # git add .
         result = subprocess.run(
             ["git", "-c", "safe.directory=*", "add", "."],
@@ -132,7 +142,7 @@ def git_push(commit_message: str = None) -> dict:
         if token:
             # Nhúng token vào URL để push tự động không tương tác
             auth_repo_url = f"https://{token}@{clean_repo}"
-            push_args = ["git", "-c", "safe.directory=*", "push", auth_repo_url, "main"]
+            push_args = ["git", "-c", "safe.directory=*", "push", auth_repo_url, current_branch]
             result = subprocess.run(
                 push_args,
                 cwd=PROJECT_ROOT,
@@ -144,8 +154,8 @@ def git_push(commit_message: str = None) -> dict:
                 success_push = True
                 
         if not success_push:
-            # Fallback sang push origin main thường dùng Credentials Manager của hệ thống hoặc SSH
-            push_args = ["git", "-c", "safe.directory=*", "push", "origin", "main"]
+            # Fallback sang push origin thường dùng Credentials Manager của hệ thống hoặc SSH
+            push_args = ["git", "-c", "safe.directory=*", "push", "origin", current_branch]
             result = subprocess.run(
                 push_args,
                 cwd=PROJECT_ROOT,

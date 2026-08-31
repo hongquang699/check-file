@@ -41,12 +41,26 @@ DANGEROUS_EXTENSIONS = {
     ".sys", ".com", ".reg", ".msi", ".msp"
 }
 
-# Magic bytes to identify executable headers
+# Image extensions supported for deep steganography & payload inspection
+IMAGE_EXTENSIONS = {
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".tif", ".svg", ".psd"
+}
+
+# Magic bytes to identify headers
 PE_MAGIC = b"MZ"
 ELF_MAGIC = b"\x7fELF"
 ZIP_MAGIC = b"PK\x03\x04"
 RAR_MAGIC = b"Rar!\x1a\x07"
+SEVEN_ZIP_MAGIC = b"7z\xbc\xaf\x27\x1c"
 PDF_MAGIC = b"%PDF"
+
+# Image Magic Bytes
+JPEG_MAGIC = b"\xff\xd8\xff"
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+GIF87_MAGIC = b"GIF87a"
+GIF89_MAGIC = b"GIF89a"
+BMP_MAGIC = b"BM"
+WEBP_MAGIC = b"RIFF"
 
 
 class Colors:
@@ -461,7 +475,132 @@ def check_virustotal(sha256_hash, api_key=None):
         }
 
 
-def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_res, disguises=None):
+def scan_image_security(file_path):
+    """Deep security analysis for image files (Steganography, embedded payloads, SVG XSS, polyglots)"""
+    ext = os.path.splitext(file_path.lower())[1]
+    is_img = ext in IMAGE_EXTENSIONS
+
+    try:
+        with open(file_path, "rb") as f:
+            header_sample = f.read(32)
+        if (header_sample.startswith(JPEG_MAGIC) or header_sample.startswith(PNG_MAGIC) or
+            header_sample.startswith(GIF87_MAGIC) or header_sample.startswith(GIF89_MAGIC) or
+            header_sample.startswith(BMP_MAGIC) or (header_sample.startswith(b"RIFF") and b"WEBP" in header_sample) or
+            b"<svg" in header_sample.lower()):
+            is_img = True
+    except Exception:
+        pass
+
+    if not is_img:
+        return None
+
+    results = {
+        "is_image": True,
+        "format_detected": "Unknown Image Format",
+        "threats": [],
+        "warnings": [],
+        "details": []
+    }
+
+    try:
+        with open(file_path, "rb") as f:
+            content = f.read()
+        
+        file_size = len(content)
+
+        # 1. Format Detection & Trailing payload checks (Steganography)
+        if content.startswith(JPEG_MAGIC):
+            results["format_detected"] = "JPEG / JPG"
+            eoi_index = content.rfind(b"\xff\xd9")
+            if eoi_index != -1 and (file_size - (eoi_index + 2)) > 64:
+                trailing_size = file_size - (eoi_index + 2)
+                results["warnings"].append(
+                    f"Detected {trailing_size} bytes of trailing data after JPEG EOI marker (Possible hidden steganography payload / appended data)."
+                )
+
+        elif content.startswith(PNG_MAGIC):
+            results["format_detected"] = "PNG"
+            iend_index = content.rfind(b"IEND")
+            if iend_index != -1 and (file_size - (iend_index + 8)) > 64:
+                trailing_size = file_size - (iend_index + 8)
+                results["warnings"].append(
+                    f"Detected {trailing_size} bytes of trailing data after PNG IEND chunk (Possible hidden payload)."
+                )
+
+        elif content.startswith(GIF87_MAGIC) or content.startswith(GIF89_MAGIC):
+            results["format_detected"] = "GIF"
+            trailer_index = content.rfind(b"\x3b")
+            if trailer_index != -1 and (file_size - (trailer_index + 1)) > 64:
+                trailing_size = file_size - (trailer_index + 1)
+                results["warnings"].append(
+                    f"Detected {trailing_size} bytes of trailing data after GIF trailer (Possible hidden payload)."
+                )
+
+        elif content.startswith(BMP_MAGIC):
+            results["format_detected"] = "BMP"
+
+        elif content.startswith(b"RIFF") and b"WEBP" in content[:16]:
+            results["format_detected"] = "WEBP"
+
+        elif ext == ".svg" or b"<svg" in content[:1024].lower():
+            results["format_detected"] = "SVG (Vector Graphics)"
+            svg_text = content.decode("utf-8", errors="ignore").lower()
+            
+            dangerous_svg_patterns = [
+                ("<script", "Embedded JavaScript <script> tag (Cross-Site Scripting XSS risk)"),
+                ("javascript:", "JavaScript URI scheme detected (XSS risk)"),
+                ("onload=", "Malicious event handler (onload) detected"),
+                ("onerror=", "Malicious event handler (onerror) detected"),
+                ("onclick=", "Event handler (onclick) detected"),
+                ("<iframe", "Embedded <iframe> tag detected"),
+                ("<!entity", "XML External Entity (XXE) entity declaration detected"),
+                ("system ", "XML External Entity SYSTEM identifier detected"),
+            ]
+            for pattern, desc in dangerous_svg_patterns:
+                if pattern in svg_text:
+                    results["threats"].append(desc)
+
+        # 2. Polyglot & Embedded Executable / Archive inside Image
+        pe_pos = content.find(b"MZ", 64)
+        if pe_pos != -1 and pe_pos < file_size - 128:
+            if b"PE\x00\x00" in content[pe_pos:pe_pos+1024]:
+                results["threats"].append(f"Embedded Windows Executable (PE/MZ) binary found at byte offset {pe_pos} (Polyglot malware)!")
+
+        elf_pos = content.find(b"\x7fELF", 16)
+        if elf_pos != -1:
+            results["threats"].append(f"Embedded Linux ELF executable found at byte offset {elf_pos}!")
+
+        zip_pos = content.find(b"PK\x03\x04", 16)
+        if zip_pos != -1:
+            results["warnings"].append(f"Embedded ZIP archive detected inside image at byte offset {zip_pos} (Polyglot / RarJPEG-style archive).")
+
+        rar_pos = content.find(b"Rar!\x1a\x07", 16)
+        if rar_pos != -1:
+            results["warnings"].append(f"Embedded RAR archive detected inside image at byte offset {rar_pos} (RarJPEG).")
+
+        # 3. Check for embedded WebShell / Script signatures
+        lower_content = content.lower()
+        script_indicators = [
+            (b"<?php", "Embedded PHP code / WebShell indicator"),
+            (b"eval(", "Embedded eval() execution function"),
+            (b"base64_decode(", "Embedded base64_decode execution function"),
+            (b"powershell", "Embedded PowerShell command string"),
+            (b"cmd.exe", "Embedded cmd.exe command string"),
+            (b"wscript.shell", "Embedded Windows Script Host (WScript.Shell)"),
+            (b"passthru(", "Embedded PHP passthru() function"),
+            (b"shell_exec(", "Embedded PHP shell_exec() function")
+        ]
+        for ind, desc in script_indicators:
+            if ind in lower_content:
+                results["threats"].append(f"{desc} (Found matching pattern '{ind.decode('ascii', errors='ignore')}')")
+
+    except Exception as e:
+        results["warnings"].append(f"Could not complete image security scan: {e}")
+
+    return results
+
+
+def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_res, disguises=None, image_info=None):
     """Print formatted security scan summary report"""
     print(f"\n{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.MAGENTA}{'SECURITY SCAN ANALYSIS REPORT':^70}{Colors.RESET}")
@@ -518,8 +657,34 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
     if not has_hidden:
         print(f"  {Colors.GREEN}✓ No hidden files, hidden directories, or suspicious disguises found.{Colors.RESET}")
 
-    # 3. Windows Defender Result
-    print(f"\n{Colors.BOLD}{Colors.CYAN}[3] OFFLINE SCAN (WINDOWS DEFENDER):{Colors.RESET}")
+    # 3. Image Security Inspection (if applicable)
+    has_image_threat = False
+    has_image_warning = False
+    if image_info and image_info.get("is_image"):
+        print(f"\n{Colors.BOLD}{Colors.CYAN}[3] IMAGE SECURITY & STEGANOGRAPHY CHECK:{Colors.RESET}")
+        print(f"  • Format: {Colors.WHITE}{image_info.get('format_detected')}{Colors.RESET}")
+        
+        threats = image_info.get("threats", [])
+        warnings = image_info.get("warnings", [])
+
+        if threats:
+            has_image_threat = True
+            print(f"  {Colors.RED}🚨 Critical Image Threats Detected:{Colors.RESET}")
+            for t in threats:
+                print(f"    - {t}")
+
+        if warnings:
+            has_image_warning = True
+            print(f"  {Colors.YELLOW}⚠ Image Security Warnings:{Colors.RESET}")
+            for w in warnings:
+                print(f"    - {w}")
+
+        if not threats and not warnings:
+            print(f"  {Colors.GREEN}✓ Clean image structure. No appended payloads or embedded scripts found.{Colors.RESET}")
+
+    # 4. Windows Defender Result
+    sec_num = 4 if (image_info and image_info.get("is_image")) else 3
+    print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] OFFLINE SCAN (WINDOWS DEFENDER):{Colors.RESET}")
     if defender_res.get("supported"):
         if defender_res.get("clean") is True:
             print(f"  {Colors.GREEN}✓ {defender_res['message']}{Colors.RESET}")
@@ -532,8 +697,9 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
     else:
         print(f"  {Colors.YELLOW}ℹ {defender_res.get('message', 'Unavailable')}{Colors.RESET}")
 
-    # 4. VirusTotal Result
-    print(f"\n{Colors.BOLD}{Colors.CYAN}[4] ONLINE LOOKUP (VIRUSTOTAL):{Colors.RESET}")
+    # 5. VirusTotal Result
+    sec_num += 1
+    print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] ONLINE LOOKUP (VIRUSTOTAL):{Colors.RESET}")
     if vt_res.get("has_api") and vt_res.get("found"):
         mal = vt_res.get("malicious", 0)
         susp = vt_res.get("suspicious", 0)
@@ -557,23 +723,25 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
     if vt_res.get("vt_url"):
         print(f"  🔗 Direct VirusTotal Report: {Colors.BLUE}{vt_res['vt_url']}{Colors.RESET}")
 
-    # 5. OVERALL VERDICT
+    # OVERALL VERDICT
     print(f"\n{Colors.BOLD}{Colors.MAGENTA}{'-'*70}{Colors.RESET}")
     print(f"{Colors.BOLD}[*] OVERALL ASSESSMENT:{Colors.RESET}")
     
     is_malicious = (
         (defender_res.get("clean") is False) or
-        (vt_res.get("has_api") and vt_res.get("malicious", 0) > 0)
+        (vt_res.get("has_api") and vt_res.get("malicious", 0) > 0) or
+        has_image_threat
     )
     is_warning = (
         has_hidden or 
-        (vt_res.get("has_api") and vt_res.get("suspicious", 0) > 0)
+        (vt_res.get("has_api") and vt_res.get("suspicious", 0) > 0) or
+        has_image_warning
     )
 
     if is_malicious:
-        print(f"  {Colors.BOLD}{Colors.RED}⛔ DANGER: The file contains VIRUS / MALWARE! Do NOT open or execute this file.{Colors.RESET}")
+        print(f"  {Colors.BOLD}{Colors.RED}⛔ DANGER: The file contains VIRUS / MALWARE / DANGEROUS PAYLOAD! Do NOT open or execute this file.{Colors.RESET}")
     elif is_warning:
-        print(f"  {Colors.BOLD}{Colors.YELLOW}⚠ WARNING: Hidden files/folders or suspicious extensions detected. Inspect carefully before opening.{Colors.RESET}")
+        print(f"  {Colors.BOLD}{Colors.YELLOW}⚠ WARNING: Hidden items, steganography or suspicious extensions detected. Inspect carefully before opening.{Colors.RESET}")
     else:
         print(f"  {Colors.BOLD}{Colors.GREEN}✅ SAFE: No security threats or hidden items detected.{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}\n")
@@ -627,6 +795,11 @@ def scan_target(target, api_key=None):
         # Check for disguise / double extensions
         disguises = check_disguised_file(file_path)
 
+        # Deep Image Security Scan (if image format or extension)
+        image_info = scan_image_security(file_path)
+        if image_info:
+            print(f"{Colors.BLUE}[*] Image detected ({image_info.get('format_detected')}). Running steganography & payload checks...{Colors.RESET}")
+
         # Check archive internals (ZIP/TAR)
         hidden_info = None
         if zipfile.is_zipfile(file_path) or tarfile.is_tarfile(file_path):
@@ -649,7 +822,8 @@ def scan_target(target, api_key=None):
             hidden_info=hidden_info,
             defender_res=defender_res,
             vt_res=vt_res,
-            disguises=disguises
+            disguises=disguises,
+            image_info=image_info
         )
 
     finally:
