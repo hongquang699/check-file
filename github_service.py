@@ -8,8 +8,16 @@ Hỗ trợ:
   - Tự động nhận diện token từ biến môi trường GITHUB_TOKEN hoặc file .env
   - Repository mục tiêu: https://github.com/hongquang699/check-file
 """
-import subprocess
 import os
+import sys
+import subprocess
+
+# Configure UTF-8 encoding for Windows Terminal
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import json
 import threading
 import time
