@@ -8,7 +8,7 @@ echo ======================================================
 echo Repository: https://github.com/hongquang699/check-file
 echo.
 
-set /p msg="Nhap commit message (de trong de tu dong dat ten): "
+set /p msg="Enter commit message (press Enter for auto timestamp): "
 
 if "%msg%"=="" (
     python github_service.py
@@ -18,5 +18,5 @@ if "%msg%"=="" (
 
 echo.
 echo ======================================================
-echo Nhan phim bat ky de thoat...
+echo Press any key to exit...
 pause >nul

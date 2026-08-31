@@ -6,8 +6,8 @@ echo ======================================================================
 echo             VIRUS & HIDDEN FILES / FOLDERS SCANNER
 echo ======================================================================
 echo.
-echo Dan link URL hoac duong dan File / Thu muc can kiem tra vao day:
-echo (Hoac nhan Enter de vao Menu tuy chon)
+echo Paste download URL or local File / Directory path to scan:
+echo (Or press Enter to open the interactive menu)
 echo.
 set /p target="> "
 
@@ -17,6 +17,6 @@ if "%target%"=="" (
     python main.py "%target%"
     echo.
     echo ======================================================================
-    echo Nhan phim bat ky de tiep tuc...
+    echo Press any key to continue...
     pause >nul
 )
