@@ -301,17 +301,160 @@ def check_disguised_file(file_path):
     return suspicious_reports
 
 
-def scan_archive_contents(archive_path):
-    """Inspect archive structure (ZIP/TAR) for hidden items and dangerous files without extracting"""
+def inspect_image_bytes(content, filename):
+    """Deep security analysis on raw image bytes (Steganography, polyglots, SVG XSS, webshells)"""
+    ext = os.path.splitext(filename.lower())[1]
     results = {
+        "filename": filename,
+        "is_image": False,
+        "format_detected": "Unknown",
+        "threats": [],
+        "warnings": []
+    }
+
+    file_size = len(content)
+    if file_size == 0:
+        return results
+
+    if content.startswith(JPEG_MAGIC):
+        results["is_image"] = True
+        results["format_detected"] = "JPEG / JPG"
+        eoi_index = content.rfind(b"\xff\xd9")
+        if eoi_index != -1 and (file_size - (eoi_index + 2)) > 64:
+            trailing_size = file_size - (eoi_index + 2)
+            results["warnings"].append(
+                f"Detected {trailing_size} bytes trailing data after JPEG EOI marker (Possible steganography / appended data)."
+            )
+
+    elif content.startswith(PNG_MAGIC):
+        results["is_image"] = True
+        results["format_detected"] = "PNG"
+        iend_index = content.rfind(b"IEND")
+        if iend_index != -1 and (file_size - (iend_index + 8)) > 64:
+            trailing_size = file_size - (iend_index + 8)
+            results["warnings"].append(
+                f"Detected {trailing_size} bytes trailing data after PNG IEND chunk (Possible hidden payload)."
+            )
+
+    elif content.startswith(GIF87_MAGIC) or content.startswith(GIF89_MAGIC):
+        results["is_image"] = True
+        results["format_detected"] = "GIF"
+        trailer_index = content.rfind(b"\x3b")
+        if trailer_index != -1 and (file_size - (trailer_index + 1)) > 64:
+            trailing_size = file_size - (trailer_index + 1)
+            results["warnings"].append(
+                f"Detected {trailing_size} bytes trailing data after GIF trailer (Possible hidden payload)."
+            )
+
+    elif content.startswith(BMP_MAGIC):
+        results["is_image"] = True
+        results["format_detected"] = "BMP"
+
+    elif content.startswith(b"RIFF") and b"WEBP" in content[:16]:
+        results["is_image"] = True
+        results["format_detected"] = "WEBP"
+
+    elif ext == ".svg" or b"<svg" in content[:1024].lower():
+        results["is_image"] = True
+        results["format_detected"] = "SVG (Vector Graphics)"
+        svg_text = content.decode("utf-8", errors="ignore").lower()
+        
+        dangerous_svg_patterns = [
+            ("<script", "Embedded JavaScript <script> tag (Cross-Site Scripting XSS risk)"),
+            ("javascript:", "JavaScript URI scheme detected (XSS risk)"),
+            ("onload=", "Malicious event handler (onload) detected"),
+            ("onerror=", "Malicious event handler (onerror) detected"),
+            ("onclick=", "Event handler (onclick) detected"),
+            ("<iframe", "Embedded <iframe> tag detected"),
+            ("<!entity", "XML External Entity (XXE) entity declaration detected"),
+            ("system ", "XML External Entity SYSTEM identifier detected"),
+        ]
+        for pattern, desc in dangerous_svg_patterns:
+            if pattern in svg_text:
+                results["threats"].append(desc)
+
+    if not results["is_image"]:
+        return results
+
+    # Polyglots & embedded executables inside image bytes
+    pe_pos = content.find(b"MZ", 64)
+    if pe_pos != -1 and pe_pos < file_size - 128:
+        if b"PE\x00\x00" in content[pe_pos:pe_pos+1024]:
+            results["threats"].append(f"Embedded Windows Executable (PE/MZ) binary found at byte offset {pe_pos} (Polyglot malware)!")
+
+    elf_pos = content.find(b"\x7fELF", 16)
+    if elf_pos != -1:
+        results["threats"].append(f"Embedded Linux ELF executable found at byte offset {elf_pos}!")
+
+    zip_pos = content.find(b"PK\x03\x04", 16)
+    if zip_pos != -1:
+        results["warnings"].append(f"Embedded ZIP archive detected inside image at byte offset {zip_pos} (Polyglot / RarJPEG-style archive).")
+
+    # Script indicators
+    lower_content = content.lower()
+    script_indicators = [
+        (b"<?php", "Embedded PHP code / WebShell indicator"),
+        (b"eval(", "Embedded eval() execution function"),
+        (b"base64_decode(", "Embedded base64_decode execution function"),
+        (b"powershell", "Embedded PowerShell command string"),
+        (b"cmd.exe", "Embedded cmd.exe command string"),
+        (b"wscript.shell", "Embedded Windows Script Host (WScript.Shell)"),
+        (b"passthru(", "Embedded PHP passthru() function"),
+        (b"shell_exec(", "Embedded PHP shell_exec() function")
+    ]
+    for ind, desc in script_indicators:
+        if ind in lower_content:
+            results["threats"].append(f"{desc} (Found matching pattern '{ind.decode('ascii', errors='ignore')}')")
+
+    return results
+
+
+def scan_archive_contents(archive_path):
+    """
+    Perform deep security analysis inside ZIP/TAR archives:
+    1. Structural inspection (hidden files/folders, double extensions, zip-slip, zip bomb).
+    2. Deep in-memory Codebase SAST & Leaked Secret scanning on all contained source code.
+    3. Deep in-memory Image Security & Steganography scanning on all contained images.
+    """
+    results = {
+        "is_archive": True,
+        "archive_type": "Unknown",
+        "all_entries_count": 0,
+        "total_uncompressed_bytes": 0,
+        "total_compressed_bytes": 0,
+        "compression_ratio": 1.0,
         "hidden_files": [],
         "hidden_dirs": [],
         "suspicious_files": [],
-        "all_entries_count": 0
+        "zip_slip_files": [],
+        "is_zip_bomb": False,
+        "encrypted_files": [],
+        "code_files_scanned": 0,
+        "code_lines_scanned": 0,
+        "code_findings": [],
+        "image_findings": [],
+        "summary": {
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "TOTAL": 0
+        }
     }
+
+    compiled_rules = []
+    for rule in CODEBASE_RULES:
+        try:
+            compiled_rules.append({
+                **rule,
+                "regex": re.compile(rule["pattern"])
+            })
+        except Exception:
+            pass
 
     # Inspect ZIP archives
     if zipfile.is_zipfile(archive_path):
+        results["archive_type"] = "ZIP Archive"
         try:
             with zipfile.ZipFile(archive_path, "r") as zf:
                 infolist = zf.infolist()
@@ -319,6 +462,18 @@ def scan_archive_contents(archive_path):
 
                 for item in infolist:
                     filename = item.filename
+                    results["total_uncompressed_bytes"] += item.file_size
+                    results["total_compressed_bytes"] += item.compress_size
+
+                    # Check for Zip Slip / Path Traversal
+                    norm_path = os.path.normpath(filename)
+                    if norm_path.startswith("..") or norm_path.startswith("/") or norm_path.startswith("\\") or "../" in filename or "..\\" in filename:
+                        results["zip_slip_files"].append(filename)
+
+                    # Check for password protection / encryption
+                    if item.flag_bits & 0x1:
+                        results["encrypted_files"].append(filename)
+
                     parts = [p for p in filename.replace("\\", "/").split("/") if p]
                     
                     # Detect hidden items (leading dot)
@@ -330,9 +485,10 @@ def scan_archive_contents(archive_path):
                                 results["hidden_dirs"].append("/".join(parts[:i+1]))
                             break
 
-                    # Check for dangerous extensions inside the archive
                     if not item.is_dir():
                         ext = os.path.splitext(filename.lower())[1]
+
+                        # Check for dangerous extensions
                         if ext in DANGEROUS_EXTENSIONS:
                             results["suspicious_files"].append(f"{filename} (Dangerous executable extension: {ext})")
                         
@@ -343,11 +499,81 @@ def scan_archive_contents(archive_path):
                             if last_ext in DANGEROUS_EXTENSIONS:
                                 results["suspicious_files"].append(f"{filename} (Double extension: .{base_parts[-2]}{last_ext})")
 
+                        # Deep Codebase SAST & Secret Scanning inside ZIP
+                        if ext in CODE_EXTENSIONS or filename == ".env" or filename.startswith(".env."):
+                            # Skip excessively large files inside zip
+                            if item.file_size <= 5 * 1024 * 1024 and not (item.flag_bits & 0x1):
+                                try:
+                                    with zf.open(item) as f_in:
+                                        raw_data = f_in.read()
+                                    
+                                    text = raw_data.decode("utf-8", errors="ignore")
+                                    lines = text.splitlines()
+                                    results["code_files_scanned"] += 1
+                                    results["code_lines_scanned"] += len(lines)
+
+                                    for line_idx, line in enumerate(lines, start=1):
+                                        stripped_line = line.strip()
+                                        if not stripped_line or stripped_line.startswith(("#", "//", "/*", "*")):
+                                            if "PRIVATE KEY" not in stripped_line:
+                                                continue
+
+                                        for rule in compiled_rules:
+                                            target_exts = rule.get("target_extensions")
+                                            if target_exts and ext not in target_exts:
+                                                continue
+
+                                            match = rule["regex"].search(stripped_line)
+                                            if match:
+                                                matched_text = match.group(0)
+                                                snippet = stripped_line
+                                                if rule["category"] == "LEAKED_SECRET":
+                                                    snippet = snippet.replace(matched_text, mask_secret(matched_text))
+
+                                                if len(snippet) > 120:
+                                                    snippet = snippet[:117] + "..."
+
+                                                finding = {
+                                                    "id": rule["id"],
+                                                    "file": f"[ZIP] {filename}",
+                                                    "line": line_idx,
+                                                    "severity": rule["severity"],
+                                                    "category": rule["category"],
+                                                    "title": rule["title"],
+                                                    "description": rule["description"],
+                                                    "snippet": snippet,
+                                                    "recommendation": rule["recommendation"]
+                                                }
+                                                results["code_findings"].append(finding)
+                                                results["summary"][rule["severity"]] += 1
+                                                results["summary"]["TOTAL"] += 1
+                                except Exception:
+                                    pass
+
+                        # Deep Image Security & Steganography inside ZIP
+                        elif ext in IMAGE_EXTENSIONS:
+                            if item.file_size <= 10 * 1024 * 1024 and not (item.flag_bits & 0x1):
+                                try:
+                                    with zf.open(item) as f_in:
+                                        raw_img = f_in.read()
+                                    img_report = inspect_image_bytes(raw_img, filename)
+                                    if img_report.get("threats") or img_report.get("warnings"):
+                                        results["image_findings"].append(img_report)
+                                except Exception:
+                                    pass
+
+                # Check for Zip Bomb
+                if results["total_compressed_bytes"] > 0:
+                    results["compression_ratio"] = results["total_uncompressed_bytes"] / results["total_compressed_bytes"]
+                    if (results["compression_ratio"] > 100 and results["total_uncompressed_bytes"] > 100 * 1024 * 1024) or results["total_uncompressed_bytes"] > 1024 * 1024 * 1024:
+                        results["is_zip_bomb"] = True
+
         except Exception as e:
             results["error"] = f"Failed to read ZIP archive: {e}"
 
     # Inspect TAR archives
     elif tarfile.is_tarfile(archive_path):
+        results["archive_type"] = "TAR Archive"
         try:
             with tarfile.open(archive_path, "r:*") as tf:
                 members = tf.getmembers()
@@ -355,6 +581,13 @@ def scan_archive_contents(archive_path):
 
                 for m in members:
                     filename = m.name
+                    results["total_uncompressed_bytes"] += m.size
+
+                    # Check for Path Traversal
+                    norm_path = os.path.normpath(filename)
+                    if norm_path.startswith("..") or norm_path.startswith("/") or norm_path.startswith("\\") or "../" in filename or "..\\" in filename:
+                        results["zip_slip_files"].append(filename)
+
                     parts = [p for p in filename.replace("\\", "/").split("/") if p]
                     for i, part in enumerate(parts):
                         if part.startswith("."):
@@ -368,6 +601,55 @@ def scan_archive_contents(archive_path):
                         ext = os.path.splitext(filename.lower())[1]
                         if ext in DANGEROUS_EXTENSIONS:
                             results["suspicious_files"].append(f"{filename} (Dangerous executable extension: {ext})")
+
+                        # Deep Codebase SAST & Secret Scanning inside TAR
+                        if (ext in CODE_EXTENSIONS or filename == ".env" or filename.startswith(".env.")) and m.size <= 5 * 1024 * 1024:
+                            try:
+                                f_in = tf.extractfile(m)
+                                if f_in:
+                                    raw_data = f_in.read()
+                                    text = raw_data.decode("utf-8", errors="ignore")
+                                    lines = text.splitlines()
+                                    results["code_files_scanned"] += 1
+                                    results["code_lines_scanned"] += len(lines)
+
+                                    for line_idx, line in enumerate(lines, start=1):
+                                        stripped_line = line.strip()
+                                        if not stripped_line or stripped_line.startswith(("#", "//", "/*", "*")):
+                                            if "PRIVATE KEY" not in stripped_line:
+                                                continue
+
+                                        for rule in compiled_rules:
+                                            target_exts = rule.get("target_extensions")
+                                            if target_exts and ext not in target_exts:
+                                                continue
+
+                                            match = rule["regex"].search(stripped_line)
+                                            if match:
+                                                matched_text = match.group(0)
+                                                snippet = stripped_line
+                                                if rule["category"] == "LEAKED_SECRET":
+                                                    snippet = snippet.replace(matched_text, mask_secret(matched_text))
+
+                                                if len(snippet) > 120:
+                                                    snippet = snippet[:117] + "..."
+
+                                                finding = {
+                                                    "id": rule["id"],
+                                                    "file": f"[TAR] {filename}",
+                                                    "line": line_idx,
+                                                    "severity": rule["severity"],
+                                                    "category": rule["category"],
+                                                    "title": rule["title"],
+                                                    "description": rule["description"],
+                                                    "snippet": snippet,
+                                                    "recommendation": rule["recommendation"]
+                                                }
+                                                results["code_findings"].append(finding)
+                                                results["summary"][rule["severity"]] += 1
+                                                results["summary"]["TOTAL"] += 1
+                            except Exception:
+                                pass
         except Exception as e:
             results["error"] = f"Failed to read TAR archive: {e}"
 
@@ -1123,15 +1405,46 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
         if ext_info.get("magic_mismatch"):
             print(f"  {Colors.RED}🚨 Mismatch Detected: True format is '{ext_info['magic_type']}' but extension claims '{ext_info['real_ext']}'!{Colors.RESET}")
 
-    # 3. Hidden items & Disguise Detection
+    # 3. Hidden items & Archive Deep Inspection
     sec_num = 3 if ext_info else 2
-    print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] HIDDEN FILES & DIRECTORIES CHECK:{Colors.RESET}")
+    is_archive = hidden_info and hidden_info.get("is_archive")
+    section_title = f"ARCHIVE DEEP SECURITY & CODE INSPECTION ({hidden_info.get('archive_type', 'Archive')})" if is_archive else "HIDDEN FILES & DIRECTORIES CHECK"
+    print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] {section_title}:{Colors.RESET}")
     
     has_hidden = False
+    has_archive_critical = False
+
     if hidden_info:
         hidden_files = hidden_info.get("hidden_files", [])
         hidden_dirs = hidden_info.get("hidden_dirs", [])
         suspicious_files = hidden_info.get("suspicious_files", [])
+        zip_slip = hidden_info.get("zip_slip_files", [])
+        is_zip_bomb = hidden_info.get("is_zip_bomb", False)
+        encrypted_files = hidden_info.get("encrypted_files", [])
+        code_findings = hidden_info.get("code_findings", [])
+        image_findings = hidden_info.get("image_findings", [])
+
+        if is_archive:
+            uncomp_mb = hidden_info.get("total_uncompressed_bytes", 0) / (1024 * 1024)
+            comp_mb = hidden_info.get("total_compressed_bytes", 0) / (1024 * 1024)
+            ratio = hidden_info.get("compression_ratio", 1.0)
+            print(f"  • Entries Count     : {hidden_info.get('all_entries_count', 0):,} item(s)")
+            print(f"  • Uncompressed Size : {uncomp_mb:.2f} MB (Compressed: {comp_mb:.2f} MB, Ratio: {ratio:.1f}x)")
+            if hidden_info.get("code_files_scanned"):
+                print(f"  • Code Files Audited: {hidden_info.get('code_files_scanned')} files ({hidden_info.get('code_lines_scanned', 0):,} LOC)")
+
+        if is_zip_bomb:
+            has_archive_critical = True
+            print(f"  {Colors.RED}🚨 CRITICAL: ZIP BOMB SUSPECT! Compression ratio is extremely high ({ratio:.1f}x). Extracting may exhaust disk or RAM!{Colors.RESET}")
+
+        if zip_slip:
+            has_archive_critical = True
+            print(f"  {Colors.RED}🚨 CRITICAL: ZIP SLIP / PATH TRAVERSAL VULNERABILITY DETECTED:{Colors.RESET}")
+            for zs in zip_slip[:5]:
+                print(f"    - [MALICIOUS PATH] {zs}")
+
+        if encrypted_files:
+            print(f"  {Colors.YELLOW}ℹ Password-Protected / Encrypted Entries: {len(encrypted_files)} file(s){Colors.RESET}")
 
         if hidden_dirs:
             has_hidden = True
@@ -1157,14 +1470,48 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
             if len(suspicious_files) > 10:
                 print(f"    ... and {len(suspicious_files) - 10} more suspicious files")
 
+        # In-Archive Codebase SAST & Leaked Secrets
+        if code_findings:
+            has_hidden = True
+            arch_summary = hidden_info.get("summary", {})
+            if arch_summary.get("CRITICAL", 0) > 0:
+                has_archive_critical = True
+
+            print(f"\n  {Colors.BOLD}{Colors.WHITE}🔍 Source Code Security Audit Inside Archive ({len(code_findings)} finding(s)):{Colors.RESET}")
+            for idx, cf in enumerate(code_findings[:8], 1):
+                if cf["severity"] == "CRITICAL":
+                    s_badge = f"{Colors.RED}[CRITICAL]{Colors.RESET}"
+                elif cf["severity"] == "HIGH":
+                    s_badge = f"{Colors.MAGENTA}[HIGH]{Colors.RESET}"
+                else:
+                    s_badge = f"{Colors.YELLOW}[{cf['severity']}]{Colors.RESET}"
+                
+                print(f"    {idx}. {s_badge} {Colors.BOLD}{cf['title']}{Colors.RESET}")
+                print(f"       📁 {cf['file']}:{cf['line']} -> {Colors.WHITE}{cf['snippet']}{Colors.RESET}")
+                print(f"       💡 Fix: {Colors.GREEN}{cf['recommendation']}{Colors.RESET}")
+
+            if len(code_findings) > 8:
+                print(f"    ... and {len(code_findings) - 8} more code findings inside archive")
+
+        # In-Archive Image Security & Steganography
+        if image_findings:
+            has_hidden = True
+            print(f"\n  {Colors.YELLOW}⚠ Image Steganography / Payloads Inside Archive ({len(image_findings)} image(s)):{Colors.RESET}")
+            for img_res in image_findings[:5]:
+                for t in img_res.get("threats", []):
+                    has_archive_critical = True
+                    print(f"    - {Colors.RED}[CRITICAL IMAGE THREAT] {img_res['filename']}: {t}{Colors.RESET}")
+                for w in img_res.get("warnings", []):
+                    print(f"    - {Colors.YELLOW}[IMAGE WARNING] {img_res['filename']}: {w}{Colors.RESET}")
+
     if disguises:
         has_hidden = True
         print(f"  {Colors.RED}🚨 FILE DISGUISE WARNING:{Colors.RESET}")
         for d in disguises:
             print(f"    - {d}")
 
-    if not has_hidden and not (ext_info and (ext_info.get("is_double_ext") or ext_info.get("has_rlo") or ext_info.get("magic_mismatch"))):
-        print(f"  {Colors.GREEN}✓ No hidden files, hidden directories, or suspicious disguises found.{Colors.RESET}")
+    if not has_hidden and not has_archive_critical and not (ext_info and (ext_info.get("is_double_ext") or ext_info.get("has_rlo") or ext_info.get("magic_mismatch"))):
+        print(f"  {Colors.GREEN}✓ Clean archive / structure. No hidden items, secrets, or suspicious files found.{Colors.RESET}")
 
     # 4. Image Security Inspection (if applicable)
     has_image_threat = False
@@ -1241,6 +1588,7 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
         (defender_res.get("clean") is False) or
         (vt_res.get("has_api") and vt_res.get("malicious", 0) > 0) or
         has_image_threat or
+        has_archive_critical or
         (ext_info and (ext_info.get("has_rlo") or ext_info.get("magic_mismatch")))
     )
     is_warning = (
@@ -1251,9 +1599,9 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
     )
 
     if is_malicious:
-        print(f"  {Colors.BOLD}{Colors.RED}⛔ DANGER: The file contains VIRUS / MALWARE / DANGEROUS PAYLOAD! Do NOT open or execute this file.{Colors.RESET}")
+        print(f"  {Colors.BOLD}{Colors.RED}⛔ DANGER: Threats / Malicious Payloads / Leaked Secrets detected! Inspect carefully before extracting or running.{Colors.RESET}")
     elif is_warning:
-        print(f"  {Colors.BOLD}{Colors.YELLOW}⚠ WARNING: Hidden items, double extensions or steganography detected. Inspect carefully before opening.{Colors.RESET}")
+        print(f"  {Colors.BOLD}{Colors.YELLOW}⚠ WARNING: Hidden items, double extensions, or security warnings detected.{Colors.RESET}")
     else:
         print(f"  {Colors.BOLD}{Colors.GREEN}✅ SAFE: No security threats or hidden items detected.{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}\n")

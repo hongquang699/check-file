@@ -13,10 +13,12 @@ A powerful, lightweight Python security tool designed to scan download URLs, loc
 - **Local Files & Folders:** Scan any local file or entire folder tree on your system.
 - **Compressed Archives:** Deeply inspects `.zip`, `.tar`, `.gz`, and `.rar` archives without extracting risky contents to disk.
 
-### 2. 👁️ Hidden Files & Directories Inspection
-- Detects hidden files and folders starting with a leading dot (`.`).
-- Checks Windows file attributes (`FILE_ATTRIBUTE_HIDDEN` and `FILE_ATTRIBUTE_SYSTEM`).
-- Identifies suspicious hidden structures nestled inside archive files.
+### 2. 📦 Deep Archive & In-Memory Inspection (`.zip`, `.tar`, `.gz`)
+- **Zero-Extraction In-Memory Scanning:** Analyzes archive contents securely in memory without extracting hazardous files to disk.
+- **Hidden Items & Disguises Inside Archive:** Detects hidden dot-files (`.env`, `.hidden/`), dangerous executables, and deceptive double extensions inside archives.
+- **In-Archive Source Code SAST & Secret Leak Audit:** Automatically scans all source code and config files packed inside the ZIP for leaked API keys, credentials, SQL injection, RCE (`eval`, `exec`), and vulnerabilities.
+- **In-Archive Image Steganography Check:** Checks all embedded images for hidden payloads, polyglots, and SVG XSS.
+- **Zip Bomb & Zip Slip Protection:** Detects compression ratio anomalies (Zip Bomb) and directory traversal attack paths (Zip Slip `../`).
 
 ### 3. 🎭 File Extension Analysis & Hidden Extension Unhiding
 - **True vs Deceptive Extension Analysis:** Unmasks hidden real extensions (e.g. `document.pdf.exe` where `.pdf` is a disguise).
