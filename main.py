@@ -1959,7 +1959,109 @@ CODEBASE_RULES = [
         "recommendation": "Use yaml.safe_load(data) instead."
     },
 
-    # 5. Weak Cryptography (MEDIUM)
+    # 5. Malicious Obfuscation & Payloads (CRITICAL / HIGH)
+    {
+        "id": "SEC_OBF01",
+        "category": "OBFUSCATED_PAYLOAD",
+        "severity": "CRITICAL",
+        "title": "Base64 Obfuscated Code Execution",
+        "pattern": r'(?i)(?:eval|exec)\s*\(\s*(?:base64\.(?:b64decode|decodebytes)|Buffer\.from\([^)]+,\s*[\'"]base64[\'"]\)|atob|\[System\.Convert\]::FromBase64String)',
+        "description": "Base64 encoded string passed directly into code execution engine (eval/exec). Frequent indicator of trojans and webshells.",
+        "recommendation": "Inspect and decode the base64 string to verify authenticity; avoid dynamic code execution."
+    },
+    {
+        "id": "SEC_OBF02",
+        "category": "MALICIOUS_EXECUTION",
+        "severity": "CRITICAL",
+        "title": "Hidden / Encoded PowerShell Execution",
+        "pattern": r'(?i)\bpowershell(?:\.exe)?\s+(?:-(?:e|enc|encodedcommand)\s+[A-Za-z0-9+/=]+|-(?:w|windowstyle)\s+hidden|-(?:nop|noprofile))',
+        "description": "PowerShell invoked with hidden window or encoded command payload, commonly used by droppers.",
+        "recommendation": "Do not execute encoded PowerShell commands in scripts."
+    },
+    {
+        "id": "SEC_OBF03",
+        "category": "BACKDOOR_PAYLOAD",
+        "severity": "CRITICAL",
+        "title": "Reverse Shell / Socket Connection",
+        "pattern": r'(?i)(?:(?:/bin/(?:ba)?sh|cmd\.exe)\s+-[ie]|>\s*&\s*/dev/tcp/\d+|pty\.spawn\s*\(\s*[\'"]/bin/(?:ba)?sh[\'"]|socket\.socket\s*\(.*connect\s*\(\s*\(\s*[\'"][0-9.]+',
+        "description": "Reverse shell socket connection spawning an interactive command shell.",
+        "recommendation": "Ensure no unauthorized remote shell listeners or callbacks exist in codebase."
+    },
+
+    # 6. WebShells & Backdoor Signatures (CRITICAL)
+    {
+        "id": "SEC_SHELL01",
+        "category": "WEBSHELL_SIGNATURE",
+        "severity": "CRITICAL",
+        "title": "PHP WebShell Backdoor Execution",
+        "target_extensions": {".php", ".phtml", ".inc", ".html"},
+        "pattern": r'(?i)(?:assert\s*\(\s*\$_(?:POST|GET|REQUEST)|eval\s*\(\s*gzinflate\s*\(\s*base64_decode|\$_(?:POST|GET|REQUEST)\[[^\]]+\]\s*\(\s*\$_(?:POST|GET|REQUEST)|preg_replace\s*\(\s*[\'"]/.*/e[\'"])',
+        "description": "Classic PHP WebShell execution vector allowing remote attackers to run arbitrary code via HTTP requests.",
+        "recommendation": "Quarantine file immediately and inspect access logs."
+    },
+    {
+        "id": "SEC_SHELL02",
+        "category": "WEBSHELL_SIGNATURE",
+        "severity": "CRITICAL",
+        "title": "JSP / ASPX WebShell Execution",
+        "target_extensions": {".jsp", ".jspx", ".aspx", ".ashx"},
+        "pattern": r'(?i)(?:Runtime\.getRuntime\s*\(\s*\)\.exec\s*\(\s*request\.getParameter|ProcessStartInfo\s*\(\s*[\'"](?:cmd\.exe|powershell)',
+        "description": "Web request parameter directly executed via system shell process.",
+        "recommendation": "Remove remote command execution endpoints."
+    },
+
+    # 7. Data Exfiltration & C2 Webhooks (HIGH)
+    {
+        "id": "SEC_EXFIL01",
+        "category": "DATA_EXFILTRATION",
+        "severity": "HIGH",
+        "title": "Discord Webhook Exfiltration Endpoint",
+        "pattern": r'https://(?:ptb\.|canary\.)?discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_\-]+',
+        "description": "Hardcoded Discord Webhook URL. Frequently used by token grabbers and info-stealers to exfiltrate passwords.",
+        "recommendation": "Check if this webhook is legitimate or used by malicious dependency to leak credentials."
+    },
+    {
+        "id": "SEC_EXFIL02",
+        "category": "DATA_EXFILTRATION",
+        "severity": "HIGH",
+        "title": "Telegram Bot Token / Exfiltration API",
+        "pattern": r'\b(\d{8,10}:[a-zA-Z0-9_-]{35})\b',
+        "description": "Telegram Bot API Token found in source code. Used for bot control or data exfiltration.",
+        "recommendation": "Rotate bot token on BotFather and load from environment variables."
+    },
+    {
+        "id": "SEC_EXFIL03",
+        "category": "C2_TUNNEL",
+        "severity": "MEDIUM",
+        "title": "Dynamic Tunnel / Ngrok C2 Callback",
+        "pattern": r'\b[a-zA-Z0-9_-]+\.(?:ngrok(?:-free)?\.app|ngrok\.io|duckdns\.org|portmap\.io)\b',
+        "description": "Tunneling / Dynamic DNS domain callback.",
+        "recommendation": "Verify whether this external tunnel domain is authorized."
+    },
+
+    # 8. Cryptominer & Mining Pools (HIGH)
+    {
+        "id": "SEC_MINE01",
+        "category": "CRYPTOMINER",
+        "severity": "HIGH",
+        "title": "Cryptocurrency Mining Pool / Stratum Protocol",
+        "pattern": r'(?i)(?:stratum\+(?:tcp|ssl)://|pool\.supportxmr\.com|minexmr\.com|xmr\.nanopool\.org|monerohash\.com)',
+        "description": "Connection string to Monero / crypto mining pool. Common signature of unauthorized cryptojackers.",
+        "recommendation": "Remove mining scripts and audit background scheduled tasks."
+    },
+
+    # 9. Insecure SSL & Network Configuration (MEDIUM)
+    {
+        "id": "SEC_NET01",
+        "category": "INSECURE_NETWORK",
+        "severity": "MEDIUM",
+        "title": "Disabled SSL / TLS Certificate Validation",
+        "pattern": r'(?i)(?:verify\s*=\s*False|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*[\'"]?0[\'"]?|rejectUnauthorized\s*:\s*false|InsecureSkipVerify\s*:\s*true)',
+        "description": "Disabling TLS certificate verification makes HTTPS connections vulnerable to Man-in-the-Middle (MitM) eavesdropping.",
+        "recommendation": "Enable certificate validation (verify=True) in production."
+    },
+
+    # 10. Weak Cryptography (MEDIUM)
     {
         "id": "VULN009",
         "category": "WEAK_CRYPTOGRAPHY",
@@ -1970,7 +2072,7 @@ CODEBASE_RULES = [
         "recommendation": "Use SHA-256 (hashlib.sha256) or bcrypt/argon2 for password hashing."
     },
 
-    # 6. Web / API Security Issues (MEDIUM)
+    # 11. Web / API Security Issues (MEDIUM / LOW)
     {
         "id": "VULN010",
         "category": "XSS_VULNERABILITY",
@@ -2004,16 +2106,19 @@ CODEBASE_RULES = [
 
 def scan_codebase_security(project_path):
     """
-    Perform deep static source code analysis (SAST) on an IT project codebase.
-    Scans for leaked API keys, tokens, credentials, and code vulnerabilities.
+    Perform deep static source code analysis (SAST) on an IT project codebase or single code file.
+    Scans for leaked API keys, tokens, credentials, obfuscation, webshells, and code vulnerabilities.
     """
     project_path = os.path.abspath(project_path)
-    if not os.path.isdir(project_path):
-        return {"error": f"Path is not a valid directory: {project_path}"}
+    if not os.path.exists(project_path):
+        return {"error": f"Path does not exist: {project_path}"}
+
+    is_single_file = os.path.isfile(project_path)
 
     scan_results = {
         "project_path": project_path,
         "project_name": os.path.basename(project_path),
+        "is_single_file": is_single_file,
         "total_files_scanned": 0,
         "total_lines_scanned": 0,
         "languages_detected": {},
@@ -2041,10 +2146,11 @@ def scan_codebase_security(project_path):
         ".kt": "Kotlin",
         ".swift": "Swift",
         ".sh": "Shell Script", ".bash": "Bash", ".zsh": "Zsh", ".ps1": "PowerShell",
+        ".bat": "Batch Script", ".cmd": "CMD Script",
         ".sql": "SQL",
         ".env": "Environment Config",
         ".json": "JSON", ".yml": "YAML", ".yaml": "YAML",
-        ".xml": "XML", ".toml": "TOML"
+        ".xml": "XML", ".toml": "TOML", ".html": "HTML", ".htm": "HTML"
     }
 
     compiled_rules = []
@@ -2057,72 +2163,84 @@ def scan_codebase_security(project_path):
         except Exception:
             pass
 
-    for root, dirs, files in os.walk(project_path):
-        dirs[:] = [d for d in dirs if d not in EXCLUDED_CODE_DIRS and not d.startswith(".")]
+    if is_single_file:
+        file_list = [(os.path.dirname(project_path), os.path.basename(project_path))]
+    else:
+        file_list = []
+        for root, dirs, files in os.walk(project_path):
+            dirs[:] = [d for d in dirs if d not in EXCLUDED_CODE_DIRS and not d.startswith(".")]
+            for filename in files:
+                file_list.append((root, filename))
 
-        for filename in files:
-            ext = os.path.splitext(filename.lower())[1]
-            if ext not in CODE_EXTENSIONS and filename != ".env" and not filename.startswith(".env."):
+    for root, filename in file_list:
+        ext = os.path.splitext(filename.lower())[1]
+        if not is_single_file and ext not in CODE_EXTENSIONS and filename != ".env" and not filename.startswith(".env."):
+            continue
+
+        file_full_path = os.path.join(root, filename)
+        rel_path = os.path.basename(filename) if is_single_file else os.path.relpath(file_full_path, project_path)
+
+        try:
+            if os.path.getsize(file_full_path) > 10 * 1024 * 1024:
+                continue
+        except Exception:
+            continue
+
+        lang = lang_map.get(ext, "Source Code")
+        scan_results["languages_detected"][lang] = scan_results["languages_detected"].get(lang, 0) + 1
+        scan_results["total_files_scanned"] += 1
+
+        try:
+            with open_file_safe(file_full_path, "r") as f:
+                content = f.read()
+            lines = content.splitlines()
+        except Exception:
+            try:
+                with open_file_safe(file_full_path, "rb") as f_bin:
+                    raw = f_bin.read()
+                text = raw.decode("utf-8", errors="ignore")
+                lines = text.splitlines()
+            except Exception:
                 continue
 
-            file_full_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(file_full_path, project_path)
+        scan_results["total_lines_scanned"] += len(lines)
 
-            try:
-                if os.path.getsize(file_full_path) > 5 * 1024 * 1024:
+        for line_idx, line in enumerate(lines, start=1):
+            stripped_line = line.strip()
+            if not stripped_line or stripped_line.startswith(("#", "//", "/*", "*")):
+                if "PRIVATE KEY" not in stripped_line:
                     continue
-            except Exception:
-                continue
 
-            lang = lang_map.get(ext, "Other Code")
-            scan_results["languages_detected"][lang] = scan_results["languages_detected"].get(lang, 0) + 1
-            scan_results["total_files_scanned"] += 1
+            for rule in compiled_rules:
+                target_exts = rule.get("target_extensions")
+                if target_exts and ext not in target_exts:
+                    continue
 
-            try:
-                with open(file_full_path, "r", encoding="utf-8", errors="ignore") as f:
-                    lines = f.readlines()
-            except Exception:
-                continue
+                match = rule["regex"].search(stripped_line)
+                if match:
+                    matched_text = match.group(0)
+                    snippet = stripped_line
+                    if rule["category"] == "LEAKED_SECRET":
+                        snippet = snippet.replace(matched_text, mask_secret(matched_text))
 
-            scan_results["total_lines_scanned"] += len(lines)
+                    if len(snippet) > 120:
+                        snippet = snippet[:117] + "..."
 
-            for line_idx, line in enumerate(lines, start=1):
-                stripped_line = line.strip()
-                if not stripped_line or stripped_line.startswith(("#", "//", "/*", "*")):
-                    if "PRIVATE KEY" not in stripped_line:
-                        continue
+                    finding = {
+                        "id": rule["id"],
+                        "file": rel_path,
+                        "line": line_idx,
+                        "severity": rule["severity"],
+                        "category": rule["category"],
+                        "title": rule["title"],
+                        "description": rule["description"],
+                        "snippet": snippet,
+                        "recommendation": rule["recommendation"]
+                    }
 
-                for rule in compiled_rules:
-                    # Check target extensions if restricted
-                    target_exts = rule.get("target_extensions")
-                    if target_exts and ext not in target_exts:
-                        continue
-
-                    match = rule["regex"].search(stripped_line)
-                    if match:
-                        matched_text = match.group(0)
-                        snippet = stripped_line
-                        if rule["category"] == "LEAKED_SECRET":
-                            snippet = snippet.replace(matched_text, mask_secret(matched_text))
-
-                        if len(snippet) > 120:
-                            snippet = snippet[:117] + "..."
-
-                        finding = {
-                            "id": rule["id"],
-                            "file": rel_path,
-                            "line": line_idx,
-                            "severity": rule["severity"],
-                            "category": rule["category"],
-                            "title": rule["title"],
-                            "description": rule["description"],
-                            "snippet": snippet,
-                            "recommendation": rule["recommendation"]
-                        }
-
-                        scan_results["findings"].append(finding)
-                        scan_results["summary"][rule["severity"]] += 1
-                        scan_results["summary"]["TOTAL"] += 1
+                    scan_results["findings"].append(finding)
+                    scan_results["summary"][rule["severity"]] += 1
+                    scan_results["summary"]["TOTAL"] += 1
 
     return scan_results
 
@@ -2562,6 +2680,13 @@ def scan_target(target, api_key=None):
         ransom_report = identify_ransomware(file_path)
         if ransom_report.get("suspected_ransomware"):
             print_ransomware_report(ransom_report)
+
+        # Deep Source Code Security Audit (if single source code file)
+        ext = os.path.splitext(file_path.lower())[1]
+        if ext in CODE_EXTENSIONS or os.path.basename(file_path) == ".env" or os.path.basename(file_path).startswith(".env."):
+            code_results = scan_codebase_security(file_path)
+            if code_results.get("summary", {}).get("TOTAL", 0) > 0:
+                print_codebase_report(code_results, export_markdown=False)
 
         # Check if single file is an encrypted/password-protected PDF
         if file_path.lower().endswith(".pdf"):

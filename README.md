@@ -47,9 +47,13 @@ A powerful, lightweight Python security tool designed to scan download URLs, loc
 - **Magic Bytes Validation:** Cross-checks actual file binary headers against declared extensions to catch renamed malware.
 - **1-Click Windows Setting (Unhide Extensions):** Built-in system tweak option to permanently reveal file extensions and hidden files across Windows File Explorer.
 
-### 7. 💻 IT Project Codebase Security & SAST Audit
-- **Multi-Language Support:** Scans Python, JavaScript, TypeScript, PHP, Java, Go, C/C++, C#, Rust, Shell scripts, SQL, and configuration files (`.env`, `.json`, `.yml`).
+### 7. 💻 Deep Source Code Security & SAST Audit (Files & Projects)
+- **Single File & Full Project Codebase Auditing:** Scans standalone scripts (`.py`, `.js`, `.php`, `.ps1`, `.bat`, `.sh`, `.html`) as well as complete project repositories.
 - **Secret & Credential Leak Detection:** Detects hardcoded AWS keys, GitHub tokens, Google API keys, OpenAI keys, Stripe secrets, private SSH keys, and database passwords (with automatic sensitive string masking in reports).
+- **WebShell & Backdoor Signatures:** Detects PHP WebShells (`assert($_POST)`, `eval(gzinflate)`), JSP/ASPX backdoors, and reverse shell sockets (`/bin/sh`, `/dev/tcp/`).
+- **Obfuscation & Malicious Payloads:** Identifies base64 encoded execution (`eval(b64decode)`), hidden PowerShell execution (`-w hidden`, `-enc`), and dropper patterns.
+- **Data Exfiltration & Grabbers:** Detects malicious Discord Webhooks, Telegram exfiltration bots, Ngrok/Dynamic DNS C2 tunnels, and Discord/Slack token grabbers.
+- **Cryptominer Detection:** Identifies unauthorized Stratum mining connections (`stratum+tcp://`, `supportxmr.com`).
 - **Vulnerability & Code Injection Detection:** Identifies Remote Code Execution (`eval()`, `exec()`, `os.system()`, `shell=True`), SQL Injection, Insecure Deserialization (`pickle`, unsafe YAML), React/DOM XSS, and weak cryptography.
 - **Actionable Remediation & Markdown Export:** Provides exact file locations, line numbers, code snippets, severity ratings (CRITICAL / HIGH / MEDIUM / LOW), and generates a structured `code_security_audit.md` report.
 
