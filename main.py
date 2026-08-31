@@ -624,10 +624,217 @@ def crack_archive_password(archive_path, mode="smart", max_len=4, wordlist_path=
         return None
 
 
+def check_pdf_encryption(pdf_path):
+    """Check if a PDF file is encrypted or has password restrictions"""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(pdf_path)
+        return {
+            "is_pdf": True,
+            "is_encrypted": reader.is_encrypted,
+            "num_pages": len(reader.pages) if not reader.is_encrypted else None
+        }
+    except Exception as e:
+        try:
+            with open_file_safe(pdf_path, "rb") as f_in:
+                head = f_in.read(1024 * 1024)
+                is_encrypted = b"/Encrypt" in head
+                return {"is_pdf": head.startswith(b"%PDF"), "is_encrypted": is_encrypted}
+        except Exception:
+            return {"is_pdf": False, "is_encrypted": False, "error": str(e)}
+
+
+def crack_and_unlock_pdf(pdf_path, mode="smart", max_len=4, wordlist_path=None, custom_password=None, output_path=None):
+    """
+    High-performance password recovery and unlocker for password-protected PDF files.
+    Decrypts the PDF and exports an unlocked, clean PDF copy without restrictions.
+    """
+    try:
+        import pypdf
+    except ImportError:
+        print(f"{Colors.RED}[✗] 'pypdf' library is required. Install it using: pip install pypdf{Colors.RESET}")
+        return None, None
+
+    if not os.path.exists(pdf_path):
+        print(f"{Colors.RED}[✗] File not found: {pdf_path}{Colors.RESET}")
+        return None, None
+
+    try:
+        reader = pypdf.PdfReader(pdf_path)
+    except Exception as e:
+        print(f"{Colors.RED}[✗] Failed to parse PDF: {e}{Colors.RESET}")
+        return None, None
+
+    if not reader.is_encrypted:
+        print(f"{Colors.GREEN}[✓] This PDF document is not password-protected.{Colors.RESET}")
+        return "", pdf_path
+
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'PDF DOCUMENT PASSWORD RECOVERY & UNLOCKER ENGINE':^70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
+    print(f"  • Target PDF  : {Colors.WHITE}{os.path.basename(pdf_path)}{Colors.RESET}")
+    print(f"  • Attack Mode : {Colors.YELLOW}{mode.upper() if not custom_password else 'DIRECT PASSWORD'}{Colors.RESET}")
+
+    # If direct password provided
+    if custom_password is not None:
+        cands = [custom_password]
+    elif mode == "smart":
+        cands = list(dict.fromkeys(COMMON_ARCHIVE_PASSWORDS))
+        for pin in range(10000):
+            cands.append(f"{pin:04d}")
+    elif mode == "pin":
+        cands = [f"{pin:04d}" for pin in range(10000)]
+        if max_len >= 6:
+            cands.extend([f"{pin:06d}" for pin in range(1000000)])
+    elif mode == "wordlist" and wordlist_path:
+        try:
+            with open(wordlist_path, "r", encoding="utf-8", errors="ignore") as f_w:
+                cands = [line.strip() for line in f_w if line.strip()]
+        except Exception as e:
+            print(f"{Colors.RED}[✗] Failed to read wordlist: {e}{Colors.RESET}")
+            return None, None
+    elif mode == "bruteforce":
+        charset = string.ascii_lowercase + string.digits
+        cands = []
+        for l in range(1, max_len + 1):
+            for comb in itertools.product(charset, repeat=l):
+                cands.append("".join(comb))
+    else:
+        cands = list(dict.fromkeys(COMMON_ARCHIVE_PASSWORDS))
+
+    total_candidates = len(cands)
+    print(f"  • Total Candidates : {total_candidates:,}")
+    print(f"  • Worker Threads   : {os.cpu_count() or 4} threads\n")
+
+    found_password = None
+    stop_flag = threading.Event()
+    tested_count = 0
+    start_time = time.time()
+
+    def test_single_pdf_pwd(pwd_str):
+        nonlocal found_password, tested_count
+        if stop_flag.is_set():
+            return None
+        tested_count += 1
+
+        try:
+            local_reader = pypdf.PdfReader(pdf_path)
+            res = local_reader.decrypt(pwd_str)
+            if res != 0:
+                found_password = pwd_str
+                stop_flag.set()
+                return pwd_str
+        except Exception:
+            pass
+        return None
+
+    workers = min(16, os.cpu_count() * 2 if os.cpu_count() else 4)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        for i in range(0, total_candidates, 50):
+            if stop_flag.is_set():
+                break
+            batch = cands[i:i+50]
+            executor.map(test_single_pdf_pwd, batch)
+
+            elapsed = time.time() - start_time
+            speed = tested_count / elapsed if elapsed > 0 else 0
+            pct = (tested_count / total_candidates) * 100 if total_candidates > 0 else 0
+            sys.stdout.write(f"\r  [{tested_count:,}/{total_candidates:,}] ({pct:.1f}%) Speed: {speed:,.0f} pwd/s | Testing: '{batch[-1]}'   ")
+            sys.stdout.flush()
+
+    elapsed = time.time() - start_time
+    sys.stdout.write("\r" + " " * 80 + "\r")
+    sys.stdout.flush()
+
+    if found_password is not None:
+        print(f"{Colors.GREEN}{Colors.BOLD}🎉 SUCCESS! PDF PASSWORD FOUND:{Colors.RESET} {Colors.WHITE}{Colors.BOLD}'{found_password}'{Colors.RESET}")
+        print(f"  • Time Elapsed : {elapsed:.2f} seconds")
+        print(f"  • Speed        : {tested_count / (elapsed or 1):,.0f} passwords/second")
+
+        if not output_path:
+            base, ext = os.path.splitext(pdf_path)
+            output_path = f"{base}_unlocked{ext}"
+
+        try:
+            reader = pypdf.PdfReader(pdf_path)
+            reader.decrypt(found_password)
+            writer = pypdf.PdfWriter()
+            for page in reader.pages:
+                writer.add_page(page)
+            with open(output_path, "wb") as f_out:
+                writer.write(f_out)
+            print(f"  {Colors.GREEN}[✓] Unlocked PDF saved successfully to: {output_path}{Colors.RESET}\n")
+            return found_password, output_path
+        except Exception as e:
+            print(f"{Colors.YELLOW}[!] Found password but failed to save unlocked PDF: {e}{Colors.RESET}\n")
+            return found_password, None
+    else:
+        print(f"{Colors.RED}[✗] Password not found among {tested_count:,} candidates tested ({elapsed:.2f}s).\n{Colors.RESET}")
+        return None, None
+
+
+def manage_pdf_unlocker():
+    """Interactive CLI menu for PDF Password Recovery & Unlocker"""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}--- PDF PASSWORD RECOVERY & UNLOCKER ---{Colors.RESET}")
+    pdf_path = input(f"{Colors.BOLD}Enter Password-Protected PDF Path:{Colors.RESET} ").strip().strip('"').strip("'")
+    
+    if not pdf_path or not os.path.exists(pdf_path):
+        print(f"{Colors.RED}[!] File not found: {pdf_path}{Colors.RESET}")
+        return
+
+    print("\nSelect PDF Recovery Method:")
+    print("  [1] Smart Dictionary Recovery (Top common passwords, years, 4-digit PINs) - (Recommended)")
+    print("  [2] Numeric PIN Brute Force (All 4-digit & 6-digit PINs, e.g. 000000-999999)")
+    print("  [3] Custom Wordlist File (Select your own dictionary .txt file)")
+    print("  [4] Alphanumeric Brute Force (Letters + digits, length 1-4)")
+    print("  [5] Enter Known Password (Decrypt and Export clean unencrypted PDF)")
+    print("  [0] Back to Main Menu")
+
+    choice = input(f"\n{Colors.CYAN}Select option (1/2/3/4/5/0): {Colors.RESET}").strip()
+    recovered_pwd, unlocked_pdf = None, None
+
+    if choice == "1":
+        recovered_pwd, unlocked_pdf = crack_and_unlock_pdf(pdf_path, mode="smart")
+    elif choice == "2":
+        recovered_pwd, unlocked_pdf = crack_and_unlock_pdf(pdf_path, mode="pin", max_len=6)
+    elif choice == "3":
+        wpath = input(f"{Colors.BOLD}Enter path to wordlist .txt file:{Colors.RESET} ").strip().strip('"').strip("'")
+        recovered_pwd, unlocked_pdf = crack_and_unlock_pdf(pdf_path, mode="wordlist", wordlist_path=wpath)
+    elif choice == "4":
+        recovered_pwd, unlocked_pdf = crack_and_unlock_pdf(pdf_path, mode="bruteforce", max_len=4)
+    elif choice == "5":
+        user_pwd = input(f"{Colors.BOLD}Enter PDF Password:{Colors.RESET} ").strip()
+        recovered_pwd, unlocked_pdf = crack_and_unlock_pdf(pdf_path, custom_password=user_pwd)
+    elif choice == "0":
+        return
+    else:
+        print(f"{Colors.RED}[!] Invalid option.{Colors.RESET}")
+        return
+
+    if unlocked_pdf and os.path.exists(unlocked_pdf):
+        scan_now = input(f"{Colors.BOLD}Would you like to scan and audit the unlocked PDF document now? (y/n): {Colors.RESET}").strip().lower()
+        if scan_now in ("y", "yes", "1"):
+            scan_target(unlocked_pdf)
+
+
 def manage_password_cracker():
-    """Interactive CLI menu for Archive Password Recovery & Cracker"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}--- ARCHIVE PASSWORD RECOVERY & CRACKER ---{Colors.RESET}")
-    archive_path = input(f"{Colors.BOLD}Enter ZIP Archive Path to recover password:{Colors.RESET} ").strip().strip('"').strip("'")
+    """Interactive CLI menu for Archive & PDF Password Recovery"""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}--- FILE PASSWORD RECOVERY & UNLOCKER HUB ---{Colors.RESET}")
+    print("  [1] Unlock & Crack Password-Protected ZIP Archive")
+    print("  [2] Unlock & Decrypt Password-Protected PDF Document")
+    print("  [0] Back to Main Menu")
+
+    target_type = input(f"\n{Colors.CYAN}Select target type (1/2/0): {Colors.RESET}").strip()
+    if target_type == "2":
+        manage_pdf_unlocker()
+        return
+    elif target_type == "0":
+        return
+    elif target_type != "1":
+        print(f"{Colors.RED}[!] Invalid option.{Colors.RESET}")
+        return
+
+    archive_path = input(f"\n{Colors.BOLD}Enter ZIP Archive Path to recover password:{Colors.RESET} ").strip().strip('"').strip("'")
     
     if not archive_path or not os.path.exists(archive_path):
         print(f"{Colors.RED}[!] File not found: {archive_path}{Colors.RESET}")
@@ -2356,6 +2563,15 @@ def scan_target(target, api_key=None):
         if ransom_report.get("suspected_ransomware"):
             print_ransomware_report(ransom_report)
 
+        # Check if single file is an encrypted/password-protected PDF
+        if file_path.lower().endswith(".pdf"):
+            pdf_check = check_pdf_encryption(file_path)
+            if pdf_check.get("is_encrypted"):
+                print(f"\n{Colors.YELLOW}🔒 PDF DOCUMENT IS PASSWORD-PROTECTED / RESTRICTED!{Colors.RESET}")
+                try_unlock = input(f"{Colors.CYAN}Would you like to recover password & unlock this PDF now? (y/n): {Colors.RESET}").strip().lower()
+                if try_unlock in ("y", "yes", "1"):
+                    crack_and_unlock_pdf(file_path, mode="smart")
+
     finally:
         # Clean up temporary downloaded file
         if temp_dir and os.path.exists(temp_dir):
@@ -2469,7 +2685,7 @@ def main():
         print(f"  [3] Configure VirusTotal API Key {vt_status}")
         print(f"  [4] Windows Settings: Always Show File Extensions & Hidden Files")
         print(f"  [5] Access & Permissions: Request Administrator Elevation (Unlock Restricted Files)")
-        print(f"  [6] Archive Password Recovery & Cracker (Unlock Protected ZIPs)")
+        print(f"  [6] File Password Recovery & Unlocker (ZIP Archives & PDF Documents)")
         print(f"  [7] Ransomware Identification & Free Decryptor Finder (STOP/Djvu, LockBit, etc.)")
         print(f"  [0] Exit")
         

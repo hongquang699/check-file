@@ -26,12 +26,14 @@ A powerful, lightweight Python security tool designed to scan download URLs, loc
 - **Automated Permission Recovery:** Automatically takes ownership and grants read access (`icacls` / `takeown`) for permission-restricted files.
 - **1-Click Administrator Elevation:** Built-in menu option (`Option 5`) to seamlessly relaunch the scanner with elevated Administrator privileges via Windows UAC.
 
-### 4. 🔑 Multi-Threaded Archive Password Cracker & Recovery
+### 4. 🔑 Multi-Threaded File Password Cracker & Unlocker (ZIP Archives & PDF Documents)
+- **ZIP & PDF Password Recovery:** High-performance multi-threaded recovery for encrypted ZIP archives and password-protected PDF files.
 - **Smart Dictionary Attack:** Rapidly tests top common leaked passwords, calendar years (1970–2035), and 4-digit PINs.
 - **PIN Brute-Force Mode:** High-speed parallel recovery for numeric PINs (`0000`–`999999`).
 - **Custom Wordlist Support:** Load your own `.txt` password dictionaries.
 - **Full Alphanumeric Brute Force:** Generates character combinations with multithreaded worker pools.
-- **Instant Unlocked Scan:** Automatically passes recovered passwords directly into the security engine to audit inside files.
+- **Instant Clean PDF Export:** Automatically strips restrictions and exports an unencrypted copy (`document_unlocked.pdf`).
+- **Instant Decrypted Scan:** Passes unlocked files directly into the security engine to audit inside source code and contents.
 
 ### 5. ☣️ Ransomware Identification & Official Decryptor Finder
 - **Strain & Family Fingerprinting:** Identifies ransomware infections by cross-referencing encrypted extensions, ransom notes (`_readme.txt`, `restore-my-files.txt`, `@Please_Read_Me@.txt`), and Shannon data entropy.
