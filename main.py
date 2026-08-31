@@ -63,6 +63,22 @@ GIF89_MAGIC = b"GIF89a"
 BMP_MAGIC = b"BM"
 WEBP_MAGIC = b"RIFF"
 
+# Source code file extensions for IT project security scanning
+CODE_EXTENSIONS = {
+    ".py", ".pyw", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx",
+    ".php", ".phtml", ".java", ".jsp", ".go", ".rb", ".rs", ".c",
+    ".cpp", ".h", ".hpp", ".cs", ".kt", ".swift", ".scala", ".sh",
+    ".bash", ".zsh", ".ps1", ".bat", ".cmd", ".sql", ".env", ".json",
+    ".yml", ".yaml", ".xml", ".toml", ".ini", ".conf", ".config", ".html"
+}
+
+# Directories to exclude during codebase scan (libraries, caches, venvs)
+EXCLUDED_CODE_DIRS = {
+    "node_modules", ".git", "__pycache__", "venv", ".venv", "env",
+    "vendor", "dist", "build", ".idea", ".vscode", "bin", "obj",
+    "target", ".next", ".nuxt", "coverage", ".pytest_cache", ".tox"
+}
+
 
 class Colors:
     """Terminal color formatting using ANSI escape codes"""
@@ -648,6 +664,430 @@ def scan_image_security(file_path):
     return results
 
 
+def mask_secret(secret_str):
+    """Mask sensitive secret strings for safe display in reports"""
+    if len(secret_str) <= 8:
+        return "****"
+    return secret_str[:4] + "*" * (len(secret_str) - 8) + secret_str[-4:]
+
+
+# Security rules for IT Codebase Static Analysis (SAST & Secret Scanning)
+CODEBASE_RULES = [
+    # 1. Leaked Secrets & API Keys (CRITICAL)
+    {
+        "id": "SEC001",
+        "category": "LEAKED_SECRET",
+        "severity": "CRITICAL",
+        "title": "AWS Access Key ID Leaked",
+        "pattern": r'\b(AKIA[0-9A-Z]{16})\b',
+        "description": "Hardcoded AWS Access Key ID exposes cloud infrastructure to unauthorized access.",
+        "recommendation": "Remove from source code and load from environment variables (e.g. AWS_ACCESS_KEY_ID)."
+    },
+    {
+        "id": "SEC002",
+        "category": "LEAKED_SECRET",
+        "severity": "CRITICAL",
+        "title": "GitHub Token Leaked",
+        "pattern": r'\b((?:ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36,}|github_pat_[a-zA-Z0-9_]{82})\b',
+        "description": "Hardcoded GitHub Personal Access Token can grant full repository access.",
+        "recommendation": "Revoke the token immediately on GitHub and use .env / environment variables."
+    },
+    {
+        "id": "SEC003",
+        "category": "LEAKED_SECRET",
+        "severity": "CRITICAL",
+        "title": "Google Cloud / Maps API Key",
+        "pattern": r'\b(AIza[0-9A-Za-z\-_]{35})\b',
+        "description": "Hardcoded Google API key can lead to quota exhaustion and financial loss.",
+        "recommendation": "Restrict key usage in Google Cloud Console and load from environment variables."
+    },
+    {
+        "id": "SEC004",
+        "category": "LEAKED_SECRET",
+        "severity": "CRITICAL",
+        "title": "OpenAI / Anthropic API Key",
+        "pattern": r'\b(sk-[a-zA-Z0-9]{32,}|sk-ant-[a-zA-Z0-9_\-]{40,})\b',
+        "description": "Hardcoded AI API key can cause billing abuse.",
+        "recommendation": "Store in .env and access via os.environ['OPENAI_API_KEY']."
+    },
+    {
+        "id": "SEC005",
+        "category": "LEAKED_SECRET",
+        "severity": "CRITICAL",
+        "title": "Stripe API Key",
+        "pattern": r'\b((?:sk_live|rk_live)_[0-9a-zA-Z]{20,})\b',
+        "description": "Live Stripe Secret Key exposes financial transactions and customer data.",
+        "recommendation": "Never commit live payment keys to version control."
+    },
+    {
+        "id": "SEC006",
+        "category": "LEAKED_SECRET",
+        "severity": "CRITICAL",
+        "title": "Private Cryptographic Key",
+        "pattern": r'-----BEGIN (?:RSA|EC|DSA|OPENSSH|PGP) PRIVATE KEY-----',
+        "description": "Private SSH/SSL/TLS key committed in plaintext.",
+        "recommendation": "Store private keys in a secure key vault or SSH agent, never in source code."
+    },
+    {
+        "id": "SEC007",
+        "category": "LEAKED_SECRET",
+        "severity": "CRITICAL",
+        "title": "Database Connection String with Credentials",
+        "pattern": r'(?i)\b(?:mongodb(?:\+srv)?|postgresql|postgres|mysql|redis|amqp):\/\/[a-zA-Z0-9_.\-%]+:[a-zA-Z0-9_.\-%@!#$^&*]+@[a-zA-Z0-9_.\-]+',
+        "description": "Database URI contains hardcoded username and password.",
+        "recommendation": "Use DATABASE_URL from environment variables."
+    },
+    {
+        "id": "SEC008",
+        "category": "LEAKED_SECRET",
+        "severity": "HIGH",
+        "title": "Generic Hardcoded Secret / Password Assignment",
+        "pattern": r'(?i)\b(?:password|secret_key|api_secret|auth_token|jwt_secret)\s*=\s*[\'"][a-zA-Z0-9@#$%^&*()_+=\-!]{8,64}[\'"]',
+        "description": "Hardcoded credential string in variable assignment.",
+        "recommendation": "Replace hardcoded value with environment configuration."
+    },
+
+    # 2. Command Injection & Remote Code Execution (HIGH)
+    {
+        "id": "VULN001",
+        "category": "COMMAND_INJECTION",
+        "severity": "HIGH",
+        "title": "Dynamic Code Execution (eval / exec)",
+        "pattern": r'(?<![\'"])\b(?:eval|exec)\s*\([^)]+\)',
+        "description": "eval() and exec() execute arbitrary strings as code, leading to Remote Code Execution (RCE).",
+        "recommendation": "Refactor logic to use safe parsing (e.g. ast.literal_eval, json.loads)."
+    },
+    {
+        "id": "VULN002",
+        "category": "COMMAND_INJECTION",
+        "severity": "HIGH",
+        "title": "Insecure Subprocess Execution (shell=True)",
+        "pattern": r'subprocess\.(?:Popen|run|call|check_output)\s*\([^)]*shell\s*=\s*True',
+        "description": "Executing system commands with shell=True is vulnerable to command injection.",
+        "recommendation": "Pass command arguments as a list and set shell=False."
+    },
+    {
+        "id": "VULN003",
+        "category": "COMMAND_INJECTION",
+        "severity": "HIGH",
+        "title": "OS Shell Command Execution",
+        "pattern": r'\bos\.(?:system|popen)\s*\(\s*(?!["\'](?:["\']|\s*["\']))[^)]+\)',
+        "description": "os.system executes commands via shell and does not sanitize user inputs.",
+        "recommendation": "Use subprocess.run with argument list instead of raw shell strings."
+    },
+    {
+        "id": "VULN004",
+        "category": "COMMAND_INJECTION",
+        "severity": "HIGH",
+        "title": "PHP Dangerous Execution Function",
+        "target_extensions": {".php", ".phtml", ".inc"},
+        "pattern": r'\b(?:system|passthru|shell_exec|exec|popen|proc_open)\s*\([^)]+\)',
+        "description": "PHP shell execution functions can result in server compromise.",
+        "recommendation": "Avoid invoking system commands or use escapeshellarg() / escapeshellcmd()."
+    },
+
+    # 3. SQL Injection (HIGH)
+    {
+        "id": "VULN005",
+        "category": "SQL_INJECTION",
+        "severity": "HIGH",
+        "title": "Potential SQL Injection (String Interpolation in SQL)",
+        "pattern": r'(?i)\b(?:SELECT\s+[\w\s,*]+\s+FROM|INSERT\s+INTO\s+\w+|UPDATE\s+\w+\s+SET|DELETE\s+FROM\s+\w+)\s+[^;\'"]*(?:%s|\{\}|\.format\s*\(|\+\s*[a-zA-Z_]|\$\{[a-zA-Z_])',
+        "description": "Constructing SQL queries via string concatenation allows SQL Injection.",
+        "recommendation": "Use parameterized queries / prepared statements (e.g. cursor.execute('SELECT * WHERE id = ?', (id,)))."
+    },
+    {
+        "id": "VULN006",
+        "category": "SQL_INJECTION",
+        "severity": "HIGH",
+        "title": "Python f-string SQL Query",
+        "pattern": r'(?i)f[\'"][^\'"]*\b(?:SELECT\s+[\w\s,*]+\s+FROM|INSERT\s+INTO\s+\w+|UPDATE\s+\w+\s+SET|DELETE\s+FROM\s+\w+)\s+.*\{[a-zA-Z_]',
+        "description": "Using Python f-strings in SQL queries bypasses query parameterization.",
+        "recommendation": "Use ORM or parameterized query binding."
+    },
+
+    # 4. Insecure Deserialization (HIGH)
+    {
+        "id": "VULN007",
+        "category": "INSECURE_DESERIALIZATION",
+        "severity": "HIGH",
+        "title": "Insecure Python Pickle Deserialization",
+        "target_extensions": {".py", ".pyw"},
+        "pattern": r'\bpickle\.(?:loads?|load)\s*\([^)]*\)',
+        "description": "Unpickling untrusted data allows arbitrary code execution.",
+        "recommendation": "Use safe data formats like JSON, MessagePack, or Protocol Buffers."
+    },
+    {
+        "id": "VULN008",
+        "category": "INSECURE_DESERIALIZATION",
+        "severity": "HIGH",
+        "title": "Unsafe YAML Deserialization",
+        "target_extensions": {".py", ".pyw"},
+        "pattern": r'\byaml\.(?:load|unsafe_load)\s*\([^)]*(?:Loader\s*=\s*yaml\.(?:UnsafeLoader|Loader)|[^\w]Loader\b)',
+        "description": "yaml.load with default or UnsafeLoader can execute arbitrary Python objects.",
+        "recommendation": "Use yaml.safe_load(data) instead."
+    },
+
+    # 5. Weak Cryptography (MEDIUM)
+    {
+        "id": "VULN009",
+        "category": "WEAK_CRYPTOGRAPHY",
+        "severity": "MEDIUM",
+        "title": "Weak Hash Algorithm (MD5 / SHA1 for Security)",
+        "pattern": r'\bhashlib\.(?:md5|sha1)\s*\([^)]*\)',
+        "description": "MD5 and SHA1 are cryptographically broken and vulnerable to collision attacks.",
+        "recommendation": "Use SHA-256 (hashlib.sha256) or bcrypt/argon2 for password hashing."
+    },
+
+    # 6. Web / API Security Issues (MEDIUM)
+    {
+        "id": "VULN010",
+        "category": "XSS_VULNERABILITY",
+        "severity": "MEDIUM",
+        "title": "React DangerouslySetInnerHTML XSS",
+        "target_extensions": {".js", ".jsx", ".ts", ".tsx"},
+        "pattern": r'dangerouslySetInnerHTML\s*=\s*\{\s*\{\s*__html\s*:',
+        "description": "Bypasses React's built-in XSS protection, allowing script injection.",
+        "recommendation": "Sanitize HTML using DOMPurify before rendering."
+    },
+    {
+        "id": "VULN011",
+        "category": "INSECURE_CONFIG",
+        "severity": "MEDIUM",
+        "title": "Overly Permissive CORS Wildcard",
+        "pattern": r'(?i)(?:Access-Control-Allow-Origin\s*[:=]\s*[\'"]\*[\'"]|cors\s*\(\s*\{\s*origin\s*:\s*[\'"]\*[\'"])',
+        "description": "Wildcard CORS ('*') allows any external website to make authenticated requests if misconfigured.",
+        "recommendation": "Specify explicit allowed domain origins."
+    },
+    {
+        "id": "VULN012",
+        "category": "INSECURE_CONFIG",
+        "severity": "LOW",
+        "title": "Debug Mode Enabled in Configuration",
+        "pattern": r'(?i)(?:DEBUG\s*=\s*True|app\.debug\s*=\s*True|\bDEBUG_MODE\b\s*=\s*1)',
+        "description": "Running with debug mode enabled can expose interactive debuggers and stack traces.",
+        "recommendation": "Ensure DEBUG is False in production environments."
+    }
+]
+
+
+def scan_codebase_security(project_path):
+    """
+    Perform deep static source code analysis (SAST) on an IT project codebase.
+    Scans for leaked API keys, tokens, credentials, and code vulnerabilities.
+    """
+    project_path = os.path.abspath(project_path)
+    if not os.path.isdir(project_path):
+        return {"error": f"Path is not a valid directory: {project_path}"}
+
+    scan_results = {
+        "project_path": project_path,
+        "project_name": os.path.basename(project_path),
+        "total_files_scanned": 0,
+        "total_lines_scanned": 0,
+        "languages_detected": {},
+        "findings": [],
+        "summary": {
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0,
+            "TOTAL": 0
+        }
+    }
+
+    lang_map = {
+        ".py": "Python", ".pyw": "Python",
+        ".js": "JavaScript", ".mjs": "JavaScript", ".cjs": "JavaScript", ".jsx": "React JS",
+        ".ts": "TypeScript", ".tsx": "React TS",
+        ".php": "PHP", ".phtml": "PHP",
+        ".java": "Java", ".jsp": "Java JSP",
+        ".go": "Go",
+        ".rb": "Ruby",
+        ".rs": "Rust",
+        ".c": "C", ".cpp": "C++", ".h": "C/C++ Header", ".hpp": "C++ Header",
+        ".cs": "C#",
+        ".kt": "Kotlin",
+        ".swift": "Swift",
+        ".sh": "Shell Script", ".bash": "Bash", ".zsh": "Zsh", ".ps1": "PowerShell",
+        ".sql": "SQL",
+        ".env": "Environment Config",
+        ".json": "JSON", ".yml": "YAML", ".yaml": "YAML",
+        ".xml": "XML", ".toml": "TOML"
+    }
+
+    compiled_rules = []
+    for rule in CODEBASE_RULES:
+        try:
+            compiled_rules.append({
+                **rule,
+                "regex": re.compile(rule["pattern"])
+            })
+        except Exception:
+            pass
+
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in EXCLUDED_CODE_DIRS and not d.startswith(".")]
+
+        for filename in files:
+            ext = os.path.splitext(filename.lower())[1]
+            if ext not in CODE_EXTENSIONS and filename != ".env" and not filename.startswith(".env."):
+                continue
+
+            file_full_path = os.path.join(root, filename)
+            rel_path = os.path.relpath(file_full_path, project_path)
+
+            try:
+                if os.path.getsize(file_full_path) > 5 * 1024 * 1024:
+                    continue
+            except Exception:
+                continue
+
+            lang = lang_map.get(ext, "Other Code")
+            scan_results["languages_detected"][lang] = scan_results["languages_detected"].get(lang, 0) + 1
+            scan_results["total_files_scanned"] += 1
+
+            try:
+                with open(file_full_path, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+            except Exception:
+                continue
+
+            scan_results["total_lines_scanned"] += len(lines)
+
+            for line_idx, line in enumerate(lines, start=1):
+                stripped_line = line.strip()
+                if not stripped_line or stripped_line.startswith(("#", "//", "/*", "*")):
+                    if "PRIVATE KEY" not in stripped_line:
+                        continue
+
+                for rule in compiled_rules:
+                    # Check target extensions if restricted
+                    target_exts = rule.get("target_extensions")
+                    if target_exts and ext not in target_exts:
+                        continue
+
+                    match = rule["regex"].search(stripped_line)
+                    if match:
+                        matched_text = match.group(0)
+                        snippet = stripped_line
+                        if rule["category"] == "LEAKED_SECRET":
+                            snippet = snippet.replace(matched_text, mask_secret(matched_text))
+
+                        if len(snippet) > 120:
+                            snippet = snippet[:117] + "..."
+
+                        finding = {
+                            "id": rule["id"],
+                            "file": rel_path,
+                            "line": line_idx,
+                            "severity": rule["severity"],
+                            "category": rule["category"],
+                            "title": rule["title"],
+                            "description": rule["description"],
+                            "snippet": snippet,
+                            "recommendation": rule["recommendation"]
+                        }
+
+                        scan_results["findings"].append(finding)
+                        scan_results["summary"][rule["severity"]] += 1
+                        scan_results["summary"]["TOTAL"] += 1
+
+    return scan_results
+
+
+def print_codebase_report(results, export_markdown=True):
+    """Print clean terminal report for IT Project Codebase SAST scan"""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'IT PROJECT SOURCE CODE SECURITY AUDIT (SAST)':^70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
+
+    if results.get("error"):
+        print(f"{Colors.RED}[✗] {results['error']}{Colors.RESET}")
+        return
+
+    # 1. Project Overview
+    print(f"\n{Colors.BOLD}{Colors.WHITE}[1] PROJECT OVERVIEW:{Colors.RESET}")
+    print(f"  • Target Project : {Colors.WHITE}{results['project_name']}{Colors.RESET} ({results['project_path']})")
+    print(f"  • Files Scanned  : {results['total_files_scanned']:,} files")
+    print(f"  • Lines of Code  : {results['total_lines_scanned']:,} lines")
+    
+    if results["languages_detected"]:
+        langs = ", ".join([f"{k} ({v})" for k, v in sorted(results["languages_detected"].items(), key=lambda x: -x[1])[:6]])
+        print(f"  • Tech Stacks    : {Colors.CYAN}{langs}{Colors.RESET}")
+
+    # 2. Executive Summary Box
+    s = results["summary"]
+    print(f"\n{Colors.BOLD}{Colors.WHITE}[2] SECURITY FINDINGS SUMMARY:{Colors.RESET}")
+    print(f"  ┌─────────────────────────────────────────────────────────────┐")
+    print(f"  │  {Colors.RED}CRITICAL: {s['CRITICAL']:<4}{Colors.RESET}  │  {Colors.MAGENTA}HIGH: {s['HIGH']:<4}{Colors.RESET}  │  {Colors.YELLOW}MEDIUM: {s['MEDIUM']:<4}{Colors.RESET}  │  {Colors.BLUE}LOW: {s['LOW']:<4}{Colors.RESET}  │  {Colors.BOLD}TOTAL: {s['TOTAL']:<4}{Colors.RESET}│")
+    print(f"  └─────────────────────────────────────────────────────────────┘")
+
+    # 3. Detailed Findings
+    findings = results["findings"]
+    if not findings:
+        print(f"\n{Colors.GREEN}{Colors.BOLD}✅ EXCELLENT! No security vulnerabilities or leaked secrets found in the codebase.{Colors.RESET}")
+    else:
+        print(f"\n{Colors.BOLD}{Colors.WHITE}[3] DETAILED VULNERABILITIES & SECRETS DETECTED:{Colors.RESET}")
+        
+        sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+        sorted_findings = sorted(findings, key=lambda x: sev_order.get(x["severity"], 99))
+
+        for idx, f in enumerate(sorted_findings, 1):
+            if f["severity"] == "CRITICAL":
+                sev_badge = f"{Colors.RED}{Colors.BOLD}[CRITICAL]{Colors.RESET}"
+            elif f["severity"] == "HIGH":
+                sev_badge = f"{Colors.MAGENTA}{Colors.BOLD}[HIGH]{Colors.RESET}"
+            elif f["severity"] == "MEDIUM":
+                sev_badge = f"{Colors.YELLOW}{Colors.BOLD}[MEDIUM]{Colors.RESET}"
+            else:
+                sev_badge = f"{Colors.BLUE}{Colors.BOLD}[LOW]{Colors.RESET}"
+
+            print(f"\n  {idx}. {sev_badge} {Colors.BOLD}{f['title']}{Colors.RESET}")
+            print(f"     📁 Location : {Colors.CYAN}{f['file']}:{f['line']}{Colors.RESET}")
+            print(f"     💻 Code     : {Colors.WHITE}{f['snippet']}{Colors.RESET}")
+            print(f"     ℹ  Details  : {f['description']}")
+            print(f"     💡 Fix      : {Colors.GREEN}{f['recommendation']}{Colors.RESET}")
+
+    # 4. Overall Verdict
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'-'*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}[*] CODEBASE SECURITY VERDICT:{Colors.RESET}")
+    if s["CRITICAL"] > 0:
+        print(f"  {Colors.BOLD}{Colors.RED}⛔ CRITICAL RISK: Leaked secrets or API keys detected! Immediate remediation required before pushing to Git.{Colors.RESET}")
+    elif s["HIGH"] > 0:
+        print(f"  {Colors.BOLD}{Colors.MAGENTA}🚨 HIGH RISK: Potential code execution or injection vulnerabilities found in source code.{Colors.RESET}")
+    elif s["MEDIUM"] > 0:
+        print(f"  {Colors.BOLD}{Colors.YELLOW}⚠ MEDIUM RISK: Security improvements and hardening recommended.{Colors.RESET}")
+    else:
+        print(f"  {Colors.BOLD}{Colors.GREEN}✅ CLEAN & SECURE: Codebase follows good security hygiene.{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}\n")
+
+    if export_markdown and findings:
+        report_path = os.path.join(results["project_path"], "code_security_audit.md")
+        try:
+            with open(report_path, "w", encoding="utf-8") as f_out:
+                f_out.write(f"# 🛡️ Source Code Security Audit Report\n\n")
+                f_out.write(f"**Project:** `{results['project_name']}`  \n")
+                f_out.write(f"**Date:** `{time.strftime('%Y-%m-%d %H:%M:%S')}`  \n")
+                f_out.write(f"**Files Scanned:** {results['total_files_scanned']} | **Lines of Code:** {results['total_lines_scanned']}\n\n")
+                f_out.write(f"## 📊 Summary\n\n")
+                f_out.write(f"- 🔴 **CRITICAL:** {s['CRITICAL']}\n")
+                f_out.write(f"- 🟠 **HIGH:** {s['HIGH']}\n")
+                f_out.write(f"- 🟡 **MEDIUM:** {s['MEDIUM']}\n")
+                f_out.write(f"- 🔵 **LOW:** {s['LOW']}\n")
+                f_out.write(f"- 📋 **TOTAL FINDINGS:** {s['TOTAL']}\n\n")
+                f_out.write(f"## 🔍 Findings List\n\n")
+                for idx, f in enumerate(sorted_findings, 1):
+                    f_out.write(f"### {idx}. [{f['severity']}] {f['title']}\n")
+                    f_out.write(f"- **File:** `{f['file']}:{f['line']}`\n")
+                    f_out.write(f"- **Snippet:** `{f['snippet']}`\n")
+                    f_out.write(f"- **Description:** {f['description']}\n")
+                    f_out.write(f"- **Recommendation:** {f['recommendation']}\n\n")
+            print(f"{Colors.GREEN}[✓] Full Security Audit Report exported to: {report_path}{Colors.RESET}")
+        except Exception as e:
+            pass
+
+
 def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_res, disguises=None, image_info=None, ext_info=None):
     """Print formatted security scan summary report"""
     print(f"\n{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}")
@@ -859,6 +1299,13 @@ def scan_target(target, api_key=None):
                 image_info=None,
                 ext_info=None
             )
+
+            # Also perform Codebase SAST Security Audit if source files exist
+            print(f"{Colors.BLUE}[*] Checking for source code files to perform SAST security audit...{Colors.RESET}")
+            code_results = scan_codebase_security(file_path)
+            if code_results.get("total_files_scanned", 0) > 0:
+                print_codebase_report(code_results)
+
             return
 
         # Target is a FILE
@@ -1010,19 +1457,26 @@ def main():
         
         print(f"{Colors.BOLD}Options:{Colors.RESET}")
         print(f"  [1] Paste Download Link (URL) or File/Directory Path to scan")
-        print(f"  [2] Configure VirusTotal API Key {vt_status}")
-        print(f"  [3] Windows Settings: Always Show File Extensions & Hidden Files")
+        print(f"  [2] Scan IT Project Codebase (Vulnerabilities, Leaked Secrets, SAST Audit)")
+        print(f"  [3] Configure VirusTotal API Key {vt_status}")
+        print(f"  [4] Windows Settings: Always Show File Extensions & Hidden Files")
         print(f"  [0] Exit")
         
-        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/0): {Colors.RESET}").strip()
+        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/4/0): {Colors.RESET}").strip()
 
         if choice == "1":
             target = input(f"\n{Colors.BOLD}Enter URL or File/Directory Path:{Colors.RESET} ").strip()
             if target:
                 scan_target(target, api_key=api_key)
         elif choice == "2":
-            manage_api_key(config)
+            code_path = input(f"\n{Colors.BOLD}Enter IT Project Folder Path (or press Enter for current directory):{Colors.RESET} ").strip()
+            if not code_path:
+                code_path = os.getcwd()
+            code_results = scan_codebase_security(code_path)
+            print_codebase_report(code_results)
         elif choice == "3":
+            manage_api_key(config)
+        elif choice == "4":
             manage_windows_extension_settings()
         elif choice == "0":
             print(f"\n{Colors.GREEN}Thank you for using the scanner! Goodbye.{Colors.RESET}")
