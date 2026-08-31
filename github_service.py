@@ -124,22 +124,15 @@ def git_push(commit_message: str = None) -> dict:
         )
         commit_out = result.stdout.strip() or result.stderr.strip()
         logs.append(f"[git commit] {commit_out}")
+        
+        has_new_commit = (result.returncode == 0)
 
-        # If nothing to commit, return success
-        if result.returncode != 0 and "nothing to commit" in commit_out.lower():
-            _save_config({"last_github_push_time": datetime.now().isoformat(), "change_counter": 0})
-            return {"success": True, "message": "Nothing to commit, repository is up to date", "output": "\n".join(logs)}
-
-        if result.returncode != 0:
-            return {"success": False, "message": "git commit failed", "output": "\n".join(logs)}
-
-        # git push
+        # git push (always execute to ensure any unpushed commits or sync is complete)
         token = _load_github_token()
         success_push = False
         push_out = ""
         
         if token:
-            # Embed token into URL for headless/automated authentication
             auth_repo_url = f"https://{token}@{clean_repo}"
             push_args = ["git", "-c", "safe.directory=*", "push", auth_repo_url, current_branch]
             result = subprocess.run(
@@ -153,7 +146,7 @@ def git_push(commit_message: str = None) -> dict:
                 success_push = True
                 
         if not success_push:
-            # Fallback to default push using Git Credential Manager or SSH
+            # Fallback to default push
             push_args = ["git", "-c", "safe.directory=*", "push", "origin", current_branch]
             result = subprocess.run(
                 push_args,
@@ -170,9 +163,12 @@ def git_push(commit_message: str = None) -> dict:
                 "last_github_push_time": datetime.now().isoformat(),
                 "change_counter": 0
             })
-            return {"success": True, "message": "Code pushed to GitHub successfully!", "output": "\n".join(logs)}
+            if has_new_commit:
+                return {"success": True, "message": "Changes committed & pushed to GitHub successfully!", "output": "\n".join(logs)}
+            else:
+                return {"success": True, "message": "Everything is up to date! GitHub repository is fully synchronized.", "output": "\n".join(logs)}
         else:
-            return {"success": False, "message": "git push failed. Check GITHUB_TOKEN, remote URL or repository permissions.", "output": "\n".join(logs)}
+            return {"success": False, "message": "Git push failed. Check your GITHUB_TOKEN or repository permissions.", "output": "\n".join(logs)}
 
     except subprocess.TimeoutExpired:
         return {"success": False, "message": "Git command execution timed out", "output": ""}
