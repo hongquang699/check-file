@@ -1,5 +1,11 @@
 # 🛡️ Virus & Hidden Files / Folders Scanner
 
+<p align="center">
+  <a href="https://skillicons.dev">
+    <img src="https://skillicons.dev/icons?i=git,kubernetes,docker,c,vim" />
+  </a>
+</p>
+
 A powerful, lightweight Python security tool designed to scan download URLs, local files, directories, compressed archives, and images for malware, virus threats, hidden files/directories, and steganography payloads.
 
 🔗 **Repository:** [https://github.com/hongquang699/check-file](https://github.com/hongquang699/check-file)
