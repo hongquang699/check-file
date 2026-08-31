@@ -1,0 +1,13 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment and sensitive configuration
+.env
+config.json
+data/system_config.json
+
+# Temporary files
+tmp/
+*.tmp
