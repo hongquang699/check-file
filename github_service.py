@@ -96,27 +96,41 @@ def git_push(commit_message: str = None) -> dict:
     try:
         logs = []
 
-        # Determine current active branch (e.g. main or master)
-        branch_result = subprocess.run(
-            ["git", "-c", "safe.directory=*", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=PROJECT_ROOT,
-            capture_output=True, text=True, encoding="utf-8", timeout=10
-        )
-        current_branch = branch_result.stdout.strip() or "main"
-        if current_branch == "HEAD":
-            current_branch = "main"
+        # 1. Automatically place .gitkeep in any empty subdirectories so Git tracks them
+        for root, dirs, files in os.walk(PROJECT_ROOT):
+            rel = os.path.relpath(root, PROJECT_ROOT)
+            if rel.startswith(".git") or rel.startswith("__pycache__") or rel == ".":
+                continue
+            if not dirs and not files:
+                gitkeep_path = os.path.join(root, ".gitkeep")
+                try:
+                    with open(gitkeep_path, "w") as f:
+                        f.write("")
+                    logs.append(f"[auto .gitkeep] Created in empty folder: {rel}")
+                except Exception:
+                    pass
 
-        # git add .
+        # 2. Check changes before adding
+        status_before = subprocess.run(
+            ["git", "-c", "safe.directory=*", "status", "--short"],
+            cwd=PROJECT_ROOT,
+            capture_output=True, text=True, encoding="utf-8", timeout=15
+        )
+        changed_items = status_before.stdout.strip()
+        if changed_items:
+            logs.append(f"[staged files]\n{changed_items}")
+
+        # 3. git add -A (stages all new, modified, and deleted files across entire project)
         result = subprocess.run(
-            ["git", "-c", "safe.directory=*", "add", "."],
+            ["git", "-c", "safe.directory=*", "add", "-A"],
             cwd=PROJECT_ROOT,
             capture_output=True, text=True, encoding="utf-8", timeout=30
         )
-        logs.append(f"[git add] {result.stdout.strip() or result.stderr.strip() or 'OK'}")
+        logs.append(f"[git add -A] {result.stdout.strip() or result.stderr.strip() or 'OK'}")
         if result.returncode != 0:
             return {"success": False, "message": "git add failed", "output": "\n".join(logs)}
 
-        # git commit
+        # 4. git commit
         result = subprocess.run(
             ["git", "-c", "safe.directory=*", "-c", "user.name=Check-File Backup", "-c", "user.email=backup@check-file.local", "commit", "-m", commit_message],
             cwd=PROJECT_ROOT,
@@ -127,36 +141,35 @@ def git_push(commit_message: str = None) -> dict:
         
         has_new_commit = (result.returncode == 0)
 
-        # git push (always execute to ensure any unpushed commits or sync is complete)
+        # 5. git push to both master and main branches to ensure GitHub shows files regardless of default branch
         token = _load_github_token()
         success_push = False
-        push_out = ""
         
-        if token:
-            auth_repo_url = f"https://{token}@{clean_repo}"
-            push_args = ["git", "-c", "safe.directory=*", "push", auth_repo_url, current_branch]
-            result = subprocess.run(
-                push_args,
-                cwd=PROJECT_ROOT,
-                capture_output=True, text=True, encoding="utf-8", timeout=60
-            )
-            push_out = result.stdout.strip() or result.stderr.strip()
-            logs.append(f"[git push with token] {push_out}")
-            if result.returncode == 0:
-                success_push = True
-                
-        if not success_push:
-            # Fallback to default push
-            push_args = ["git", "-c", "safe.directory=*", "push", "origin", current_branch]
-            result = subprocess.run(
-                push_args,
-                cwd=PROJECT_ROOT,
-                capture_output=True, text=True, encoding="utf-8", timeout=60
-            )
-            push_out = result.stdout.strip() or result.stderr.strip()
-            logs.append(f"[git push origin] {push_out}")
-            if result.returncode == 0:
-                success_push = True
+        target_branches = ["master", "main"]
+        for branch in target_branches:
+            if token:
+                auth_repo_url = f"https://{token}@{clean_repo}"
+                push_args = ["git", "-c", "safe.directory=*", "push", auth_repo_url, f"HEAD:{branch}"]
+                result = subprocess.run(
+                    push_args,
+                    cwd=PROJECT_ROOT,
+                    capture_output=True, text=True, encoding="utf-8", timeout=60
+                )
+                p_out = result.stdout.strip() or result.stderr.strip()
+                logs.append(f"[git push {branch}] {p_out}")
+                if result.returncode == 0:
+                    success_push = True
+            else:
+                push_args = ["git", "-c", "safe.directory=*", "push", "origin", f"HEAD:{branch}"]
+                result = subprocess.run(
+                    push_args,
+                    cwd=PROJECT_ROOT,
+                    capture_output=True, text=True, encoding="utf-8", timeout=60
+                )
+                p_out = result.stdout.strip() or result.stderr.strip()
+                logs.append(f"[git push {branch}] {p_out}")
+                if result.returncode == 0:
+                    success_push = True
 
         if success_push:
             _save_config({
@@ -164,7 +177,7 @@ def git_push(commit_message: str = None) -> dict:
                 "change_counter": 0
             })
             if has_new_commit:
-                return {"success": True, "message": "Changes committed & pushed to GitHub successfully!", "output": "\n".join(logs)}
+                return {"success": True, "message": "All files & folders committed & pushed to GitHub successfully!", "output": "\n".join(logs)}
             else:
                 return {"success": True, "message": "Everything is up to date! GitHub repository is fully synchronized.", "output": "\n".join(logs)}
         else:
