@@ -47,6 +47,7 @@ check-file/
 ├── github_service.py    # GitHub automated/manual sync service
 ├── run_scanner.bat      # 1-Click Windows shortcut to scan files/URLs
 ├── push_github.bat      # 1-Click Windows shortcut to push code to GitHub
+├── requirements.txt     # Optional dependencies list
 ├── robots.txt           # Web crawler directives
 ├── .env.example         # Template for environment variables (GITHUB_TOKEN)
 ├── .gitignore           # Git ignore rules for sensitive config and temporary files

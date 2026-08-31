@@ -1,0 +1,7 @@
+# Core project runs using Python Standard Library (No mandatory dependencies required)
+# The following optional packages enhance terminal colors and performance:
+
+colorama>=0.4.6
+requests>=2.31.0
+python-dotenv>=1.0.0
+Pillow>=10.0.0
