@@ -22,6 +22,10 @@ if hasattr(sys.stderr, "reconfigure"):
 
 import json
 import time
+import string
+import itertools
+import threading
+import concurrent.futures
 import shutil
 import hashlib
 import tempfile
@@ -474,13 +478,198 @@ def inspect_image_bytes(content, filename):
     return results
 
 
+# Common passwords used in security analysis, archives, and password recovery
+COMMON_ARCHIVE_PASSWORDS = [
+    "", "123456", "password", "12345678", "1234", "admin", "12345", "123456789",
+    "infected", "virus", "malware", "111111", "000000", "123123", "qwerty", "test",
+    "root", "pass", "secret", "welcome", "administrator", "guest", "default",
+    "123", "666666", "888888", "123321", "654321", "777777", "999999", "1234567",
+    "password123", "pass123", "admin123", "test123", "root123", "dragon", "master",
+    "freedom", "superman", "iloveyou", "trustno1", "shadow", "sunshine", "princess",
+    "football", "monkey", "baseball", "computer", "keyboard", "windows", "security",
+    "hunter2", "letmein", "changeme", "qwertyuiop", "starwars", "myspace1"
+]
+COMMON_ARCHIVE_PASSWORDS.extend([str(yr) for yr in range(1970, 2036)])
+
+
+def crack_archive_password(archive_path, mode="smart", max_len=4, wordlist_path=None):
+    """
+    High-performance multi-threaded password recovery / cracker for encrypted ZIP archives.
+    Modes:
+      'smart': Top common passwords, years, and 4-digit PINs.
+      'pin': Numeric PINs (0000-9999, 000000-999999).
+      'wordlist': Custom user dictionary text file.
+      'bruteforce': Full alphanumeric combinations up to max_len.
+    """
+    if not os.path.exists(archive_path):
+        print(f"{Colors.RED}[✗] File not found: {archive_path}{Colors.RESET}")
+        return None
+
+    if not zipfile.is_zipfile(archive_path):
+        print(f"{Colors.RED}[✗] Target is not a valid ZIP archive.{Colors.RESET}")
+        return None
+
+    try:
+        zf = zipfile.ZipFile(archive_path, "r")
+    except Exception as e:
+        print(f"{Colors.RED}[✗] Cannot open ZIP file: {e}{Colors.RESET}")
+        return None
+
+    encrypted_items = [it for it in zf.infolist() if (it.flag_bits & 0x1) and not it.is_dir()]
+    if not encrypted_items:
+        print(f"{Colors.GREEN}[✓] This archive is not password-protected (no encrypted files).{Colors.RESET}")
+        return ""
+
+    test_item = encrypted_items[0]
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'ARCHIVE PASSWORD RECOVERY / CRACKER ENGINE':^70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
+    print(f"  • Target File : {Colors.WHITE}{os.path.basename(archive_path)}{Colors.RESET}")
+    print(f"  • Test Entry  : {Colors.WHITE}{test_item.filename}{Colors.RESET}")
+    print(f"  • Attack Mode : {Colors.YELLOW}{mode.upper()}{Colors.RESET}")
+
+    # Generate candidate stream
+    candidates_gen = []
+    if mode == "smart":
+        # Smart dictionary + 4-digit PINs
+        cands = list(dict.fromkeys(COMMON_ARCHIVE_PASSWORDS))
+        for pin in range(10000):
+            cands.append(f"{pin:04d}")
+        candidates_gen = cands
+
+    elif mode == "pin":
+        print("  • Generating PIN candidates (4-digit & 6-digit)...")
+        cands = [f"{pin:04d}" for pin in range(10000)]
+        if max_len >= 6:
+            cands.extend([f"{pin:06d}" for pin in range(1000000)])
+        candidates_gen = cands
+
+    elif mode == "wordlist" and wordlist_path:
+        if not os.path.exists(wordlist_path):
+            print(f"{Colors.RED}[✗] Wordlist file not found: {wordlist_path}{Colors.RESET}")
+            return None
+        try:
+            with open(wordlist_path, "r", encoding="utf-8", errors="ignore") as f_w:
+                candidates_gen = [line.strip() for line in f_w if line.strip()]
+            print(f"  • Loaded {len(candidates_gen):,} passwords from wordlist.")
+        except Exception as e:
+            print(f"{Colors.RED}[✗] Failed to read wordlist: {e}{Colors.RESET}")
+            return None
+
+    elif mode == "bruteforce":
+        charset = string.ascii_lowercase + string.digits
+        print(f"  • Generating brute-force combinations (charset: a-z, 0-9, max length: {max_len})...")
+        cands = []
+        for l in range(1, max_len + 1):
+            for comb in itertools.product(charset, repeat=l):
+                cands.append("".join(comb))
+        candidates_gen = cands
+
+    total_candidates = len(candidates_gen)
+    print(f"  • Total Candidates : {total_candidates:,}")
+    print(f"  • Worker Threads   : {os.cpu_count() or 4} threads\n")
+
+    found_password = None
+    stop_flag = threading.Event()
+    tested_count = 0
+    start_time = time.time()
+
+    def test_single_pwd(pwd_str):
+        nonlocal found_password, tested_count
+        if stop_flag.is_set():
+            return None
+
+        tested_count += 1
+        pwd_bytes = pwd_str.encode("utf-8") if pwd_str else None
+
+        try:
+            with zf.open(test_item, pwd=pwd_bytes) as f_test:
+                f_test.read(32)
+            found_password = pwd_str
+            stop_flag.set()
+            return pwd_str
+        except Exception:
+            return None
+
+    # Run in parallel with ThreadPool
+    workers = min(16, os.cpu_count() * 2 if os.cpu_count() else 4)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        for i in range(0, total_candidates, 100):
+            if stop_flag.is_set():
+                break
+
+            batch = candidates_gen[i:i+100]
+            executor.map(test_single_pwd, batch)
+
+            # Update progress line
+            elapsed = time.time() - start_time
+            speed = tested_count / elapsed if elapsed > 0 else 0
+            pct = (tested_count / total_candidates) * 100 if total_candidates > 0 else 0
+            sys.stdout.write(f"\r  [{tested_count:,}/{total_candidates:,}] ({pct:.1f}%) Speed: {speed:,.0f} pwd/s | Testing: '{batch[-1]}'   ")
+            sys.stdout.flush()
+
+    elapsed = time.time() - start_time
+    sys.stdout.write("\r" + " " * 80 + "\r")
+    sys.stdout.flush()
+
+    if found_password is not None:
+        print(f"{Colors.GREEN}{Colors.BOLD}🎉 SUCCESS! PASSWORD FOUND:{Colors.RESET} {Colors.WHITE}{Colors.BOLD}'{found_password}'{Colors.RESET}")
+        print(f"  • Time Elapsed : {elapsed:.2f} seconds")
+        print(f"  • Speed        : {tested_count / (elapsed or 1):,.0f} passwords/second\n")
+        return found_password
+    else:
+        print(f"{Colors.RED}[✗] Password not found among {tested_count:,} candidates tested ({elapsed:.2f}s).{Colors.RESET}")
+        print(f"  Try using a larger custom wordlist or full brute-force mode.\n")
+        return None
+
+
+def manage_password_cracker():
+    """Interactive CLI menu for Archive Password Recovery & Cracker"""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}--- ARCHIVE PASSWORD RECOVERY & CRACKER ---{Colors.RESET}")
+    archive_path = input(f"{Colors.BOLD}Enter ZIP Archive Path to recover password:{Colors.RESET} ").strip().strip('"').strip("'")
+    
+    if not archive_path or not os.path.exists(archive_path):
+        print(f"{Colors.RED}[!] File not found: {archive_path}{Colors.RESET}")
+        return
+
+    print("\nSelect Attack Method:")
+    print("  [1] Smart Dictionary Recovery (Top common passwords, years, 4-digit PINs) - (Fast & Recommended)")
+    print("  [2] Numeric PIN Brute Force (All 4-digit & 6-digit PINs, e.g. 000000-999999)")
+    print("  [3] Custom Wordlist File (Select your own dictionary .txt file)")
+    print("  [4] Alphanumeric Brute Force (Letters + digits, length 1-4)")
+    print("  [0] Back to Main Menu")
+
+    choice = input(f"\n{Colors.CYAN}Select option (1/2/3/4/0): {Colors.RESET}").strip()
+    recovered_pwd = None
+
+    if choice == "1":
+        recovered_pwd = crack_archive_password(archive_path, mode="smart")
+    elif choice == "2":
+        recovered_pwd = crack_archive_password(archive_path, mode="pin", max_len=6)
+    elif choice == "3":
+        wpath = input(f"{Colors.BOLD}Enter path to wordlist .txt file:{Colors.RESET} ").strip().strip('"').strip("'")
+        recovered_pwd = crack_archive_password(archive_path, mode="wordlist", wordlist_path=wpath)
+    elif choice == "4":
+        recovered_pwd = crack_archive_password(archive_path, mode="bruteforce", max_len=4)
+    elif choice == "0":
+        return
+    else:
+        print(f"{Colors.RED}[!] Invalid option.{Colors.RESET}")
+        return
+
+    if recovered_pwd is not None:
+        scan_now = input(f"{Colors.BOLD}Would you like to scan and audit this decrypted archive now? (y/n): {Colors.RESET}").strip().lower()
+        if scan_now in ("y", "yes", "1"):
+            scan_target(archive_path)
+
+
 def scan_archive_contents(archive_path, password=None):
     """
     Perform deep security analysis inside ZIP/TAR archives:
     1. Structural inspection (hidden files/folders, double extensions, zip-slip, zip bomb).
     2. Deep in-memory Codebase SAST & Leaked Secret scanning on all contained source code.
     3. Deep in-memory Image Security & Steganography scanning on all contained images.
-    4. Supports password-protected / encrypted archives (auto-tries common keys or user password).
+    4. Supports password-protected / encrypted archives (auto-tries common keys, user password, or built-in cracker).
     """
     results = {
         "is_archive": True,
@@ -540,7 +729,7 @@ def scan_archive_contents(archive_path, password=None):
                     candidates = []
                     if password:
                         candidates.append(password)
-                    candidates.extend(["", "123456", "password", "1234", "admin", "infected", "virus", "12345678", "root", "1111", "qwerty"])
+                    candidates.extend(COMMON_ARCHIVE_PASSWORDS[:50])
 
                     for cand in candidates:
                         cand_bytes = cand.encode("utf-8") if cand else None
@@ -554,11 +743,17 @@ def scan_archive_contents(archive_path, password=None):
                         except Exception:
                             continue
 
-                    # 2. If still locked, prompt user interactively
+                    # 2. If still locked, prompt user or offer built-in password cracker
                     if active_pwd_bytes is None:
                         print(f"\n{Colors.YELLOW}🔒 ARCHIVE IS PASSWORD-PROTECTED ({len(encrypted_items)} encrypted files detected).{Colors.RESET}")
-                        user_pwd = input(f"{Colors.CYAN}Enter archive password to decrypt & scan (or press Enter to skip): {Colors.RESET}").strip()
-                        if user_pwd:
+                        user_pwd = input(f"{Colors.CYAN}Enter archive password (or type 'crack' to auto-crack, press Enter to skip): {Colors.RESET}").strip()
+                        if user_pwd.lower() == "crack":
+                            recovered = crack_archive_password(archive_path, mode="smart")
+                            if recovered is not None:
+                                active_pwd_bytes = recovered.encode("utf-8")
+                                results["decrypted_status"] = "SUCCESS"
+                                results["decrypted_password"] = recovered
+                        elif user_pwd:
                             try:
                                 with zf.open(test_item, pwd=user_pwd.encode("utf-8")) as f_test:
                                     f_test.read(32)
@@ -568,7 +763,14 @@ def scan_archive_contents(archive_path, password=None):
                                 print(f"{Colors.GREEN}[✓] Password accepted! Archive unlocked successfully.{Colors.RESET}")
                             except Exception:
                                 results["decrypted_status"] = "WRONG_PASSWORD"
-                                print(f"{Colors.RED}[✗] Incorrect password. Could not decrypt inside files.{Colors.RESET}")
+                                print(f"{Colors.RED}[✗] Incorrect password.{Colors.RESET}")
+                                try_crack = input(f"{Colors.CYAN}Would you like to run the Password Cracker to recover it? (y/n): {Colors.RESET}").strip().lower()
+                                if try_crack in ("y", "yes", "1"):
+                                    recovered = crack_archive_password(archive_path, mode="smart")
+                                    if recovered is not None:
+                                        active_pwd_bytes = recovered.encode("utf-8")
+                                        results["decrypted_status"] = "SUCCESS"
+                                        results["decrypted_password"] = recovered
                         else:
                             results["decrypted_status"] = "LOCKED_NO_PASSWORD"
 
@@ -1928,9 +2130,10 @@ def main():
         print(f"  [3] Configure VirusTotal API Key {vt_status}")
         print(f"  [4] Windows Settings: Always Show File Extensions & Hidden Files")
         print(f"  [5] Access & Permissions: Request Administrator Elevation (Unlock Restricted Files)")
+        print(f"  [6] Archive Password Recovery & Cracker (Unlock Protected ZIPs)")
         print(f"  [0] Exit")
         
-        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/4/5/0): {Colors.RESET}").strip()
+        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/4/5/6/0): {Colors.RESET}").strip()
 
         if choice == "1":
             target = input(f"\n{Colors.BOLD}Enter URL or File/Directory Path:{Colors.RESET} ").strip()
@@ -1948,6 +2151,8 @@ def main():
             manage_windows_extension_settings()
         elif choice == "5":
             elevate_to_admin()
+        elif choice == "6":
+            manage_password_cracker()
         elif choice == "0":
             print(f"\n{Colors.GREEN}Thank you for using the scanner! Goodbye.{Colors.RESET}")
             break

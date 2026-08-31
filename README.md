@@ -26,30 +26,37 @@ A powerful, lightweight Python security tool designed to scan download URLs, loc
 - **Automated Permission Recovery:** Automatically takes ownership and grants read access (`icacls` / `takeown`) for permission-restricted files.
 - **1-Click Administrator Elevation:** Built-in menu option (`Option 5`) to seamlessly relaunch the scanner with elevated Administrator privileges via Windows UAC.
 
-### 4. 🎭 File Extension Analysis & Hidden Extension Unhiding
+### 4. 🔑 Multi-Threaded Archive Password Cracker & Recovery
+- **Smart Dictionary Attack:** Rapidly tests top common leaked passwords, calendar years (1970–2035), and 4-digit PINs.
+- **PIN Brute-Force Mode:** High-speed parallel recovery for numeric PINs (`0000`–`999999`).
+- **Custom Wordlist Support:** Load your own `.txt` password dictionaries.
+- **Full Alphanumeric Brute Force:** Generates character combinations with multithreaded worker pools.
+- **Instant Unlocked Scan:** Automatically passes recovered passwords directly into the security engine to audit inside files.
+
+### 5. 🎭 File Extension Analysis & Hidden Extension Unhiding
 - **True vs Deceptive Extension Analysis:** Unmasks hidden real extensions (e.g. `document.pdf.exe` where `.pdf` is a disguise).
 - **Advanced Spoofing Detection:** Detects Right-to-Left Override (RLO `\u202E`) Unicode attacks and space-padding tricks used to push `.exe` extensions off-screen.
 - **Magic Bytes Validation:** Cross-checks actual file binary headers against declared extensions to catch renamed malware.
 - **1-Click Windows Setting (Unhide Extensions):** Built-in system tweak option to permanently reveal file extensions and hidden files across Windows File Explorer.
 
-### 5. 💻 IT Project Codebase Security & SAST Audit
+### 6. 💻 IT Project Codebase Security & SAST Audit
 - **Multi-Language Support:** Scans Python, JavaScript, TypeScript, PHP, Java, Go, C/C++, C#, Rust, Shell scripts, SQL, and configuration files (`.env`, `.json`, `.yml`).
 - **Secret & Credential Leak Detection:** Detects hardcoded AWS keys, GitHub tokens, Google API keys, OpenAI keys, Stripe secrets, private SSH keys, and database passwords (with automatic sensitive string masking in reports).
 - **Vulnerability & Code Injection Detection:** Identifies Remote Code Execution (`eval()`, `exec()`, `os.system()`, `shell=True`), SQL Injection, Insecure Deserialization (`pickle`, unsafe YAML), React/DOM XSS, and weak cryptography.
 - **Actionable Remediation & Markdown Export:** Provides exact file locations, line numbers, code snippets, severity ratings (CRITICAL / HIGH / MEDIUM / LOW), and generates a structured `code_security_audit.md` report.
 
-### 6. 🖼️ Deep Image Security & Steganography Analysis
+### 7. 🖼️ Deep Image Security & Steganography Analysis
 - **Supported Formats:** JPG/JPEG, PNG, GIF, BMP, WEBP, SVG, TIFF, PSD.
 - **Steganography & Trailing Payloads:** Checks for unauthorized data appended past standard End-of-Image markers (`EOI / IEND / trailer`).
 - **Polyglot Detection:** Detects embedded executables (`MZ/PE`, `ELF`) or archives (`RarJPEG`, Zip-in-PNG) hidden within images.
 - **SVG Vector Security:** Scans for Cross-Site Scripting (XSS), malicious JavaScript (`<script>`, `onload=`, `onerror=`, `javascript:`), and XML External Entity (`XXE`) exploits.
 - **WebShell Detection:** Identifies embedded PHP, eval, PowerShell, or command strings inside image metadata.
 
-### 7. 🔍 Dual-Layer Antivirus Scanning
+### 8. 🔍 Dual-Layer Antivirus Scanning
 - **Offline (Free & Native):** Directly integrates with the built-in **Windows Defender** engine (`MpCmdRun.exe`).
 - **Online (VirusTotal):** Computes `MD5` and `SHA256` hashes to query the VirusTotal v3 API or generate direct report URLs.
 
-### 8. 🚀 Automated GitHub Synchronization
+### 9. 🚀 Automated GitHub Synchronization
 - Push updates directly to GitHub via `github_service.py` or 1-click batch scripts.
 - Supports scheduled background pushes and secure token authentication via `.env`.
 
