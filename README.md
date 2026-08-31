@@ -18,9 +18,11 @@ A powerful, lightweight Python security tool designed to scan download URLs, loc
 - Checks Windows file attributes (`FILE_ATTRIBUTE_HIDDEN` and `FILE_ATTRIBUTE_SYSTEM`).
 - Identifies suspicious hidden structures nestled inside archive files.
 
-### 3. 🎭 Disguise & Double Extension Detection
-- Detects dangerous double extensions (e.g., `document.pdf.exe`, `photo.jpg.scr`, `invoice.docx.vbs`).
-- Inspects **Magic Bytes** to catch Windows PE (`EXE/DLL`) or Linux `ELF` binaries masquerading as harmless image or document extensions.
+### 3. 🎭 File Extension Analysis & Hidden Extension Unhiding
+- **True vs Deceptive Extension Analysis:** Unmasks hidden real extensions (e.g. `document.pdf.exe` where `.pdf` is a disguise).
+- **Advanced Spoofing Detection:** Detects Right-to-Left Override (RLO `\u202E`) Unicode attacks and space-padding tricks used to push `.exe` extensions off-screen.
+- **Magic Bytes Validation:** Cross-checks actual file binary headers against declared extensions to catch renamed malware.
+- **1-Click Windows Setting (Unhide Extensions):** Built-in system tweak option to permanently reveal file extensions and hidden files across Windows File Explorer.
 
 ### 4. 🖼️ Deep Image Security & Steganography Analysis
 - **Supported Formats:** JPG/JPEG, PNG, GIF, BMP, WEBP, SVG, TIFF, PSD.

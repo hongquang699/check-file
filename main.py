@@ -12,6 +12,7 @@ Features:
 
 import os
 import sys
+import re
 
 # Configure UTF-8 encoding for Windows Terminal to support Unicode characters
 if hasattr(sys.stdout, "reconfigure"):
@@ -196,43 +197,90 @@ def is_windows_hidden(file_path):
     return name.startswith(".")
 
 
-def check_disguised_file(file_path):
-    """Check if file has double extensions or disguised executable headers"""
-    suspicious_reports = []
+def analyze_file_extension(file_path):
+    """Deep analysis of full filename, real extension, hidden extension, RLO, and space padding"""
     name = os.path.basename(file_path)
-    lower_name = name.lower()
-
-    # 1. Double extension check (e.g., sample.pdf.exe)
-    parts = name.split(".")
-    if len(parts) > 2:
-        ext_last = f".{parts[-1].lower()}"
-        ext_prev = f".{parts[-2].lower()}"
-        if ext_last in DANGEROUS_EXTENSIONS:
-            suspicious_reports.append(
-                f"Dangerous double extension detected ({ext_prev}{ext_last}) - potential document disguise!"
-            )
-
-    # 2. Magic Bytes validation
+    
+    # 1. RLO character detection (Right-to-Left Override \u202E, \u202B, \u202D, \u202A, \u202C)
+    has_rlo = any(char in name for char in ["\u202e", "\u202b", "\u202d", "\u202a", "\u202c"])
+    
+    # 2. Check for space padding before extension (e.g. "invoice.pdf          .exe")
+    has_space_padding = bool(re.search(r'\s{3,}\.[a-zA-Z0-9]+$', name))
+    
+    # 3. Clean filename and parse all extensions
+    clean_name = re.sub(r'[\u202a-\u202e]', '', name)
+    parts = clean_name.split(".")
+    
+    real_ext = f".{parts[-1].lower()}" if len(parts) > 1 else "(No extension)"
+    fake_ext = f".{parts[-2].lower()}" if len(parts) > 2 else ""
+    is_double_ext = len(parts) > 2 and (f".{parts[-1].lower()}" in DANGEROUS_EXTENSIONS)
+    
+    # 4. Binary magic header check
+    magic_type = "Generic File / Unknown"
+    magic_mismatch = False
     try:
         with open(file_path, "rb") as f:
-            header = f.read(16)
-
-        is_pe = header.startswith(PE_MAGIC)
-        is_elf = header.startswith(ELF_MAGIC)
-        
-        non_exec_extensions = {".jpg", ".jpeg", ".png", ".gif", ".pdf", ".txt", ".docx", ".xlsx", ".pptx", ".mp3", ".mp4"}
-        ext = os.path.splitext(lower_name)[1]
-        
-        if is_pe and ext in non_exec_extensions:
-            suspicious_reports.append(
-                f"Windows Executable (PE/EXE) disguised as extension '{ext}'!"
-            )
-        elif is_elf and ext in non_exec_extensions:
-            suspicious_reports.append(
-                f"Linux Executable (ELF) disguised as extension '{ext}'!"
-            )
+            header = f.read(32)
+        if header.startswith(PE_MAGIC):
+            magic_type = "Windows PE Executable (EXE/DLL)"
+            if real_ext not in {".exe", ".dll", ".sys", ".scr", ".cpl", ".ocx", ".msi"}:
+                magic_mismatch = True
+        elif header.startswith(ELF_MAGIC):
+            magic_type = "Linux ELF Executable"
+            if real_ext not in {".elf", ".bin", ""}:
+                magic_mismatch = True
+        elif header.startswith(PDF_MAGIC):
+            magic_type = "Adobe PDF Document"
+        elif header.startswith(JPEG_MAGIC):
+            magic_type = "JPEG Image"
+        elif header.startswith(PNG_MAGIC):
+            magic_type = "PNG Image"
+        elif header.startswith(GIF87_MAGIC) or header.startswith(GIF89_MAGIC):
+            magic_type = "GIF Image"
+        elif header.startswith(ZIP_MAGIC):
+            magic_type = "ZIP / OpenXML Archive"
+        elif header.startswith(RAR_MAGIC):
+            magic_type = "RAR Archive"
     except Exception:
         pass
+
+    return {
+        "full_name": name,
+        "clean_name": clean_name,
+        "real_ext": real_ext,
+        "fake_ext": fake_ext,
+        "is_double_ext": is_double_ext,
+        "has_rlo": has_rlo,
+        "has_space_padding": has_space_padding,
+        "magic_type": magic_type,
+        "magic_mismatch": magic_mismatch
+    }
+
+
+def check_disguised_file(file_path):
+    """Check if file has double extensions, RLO spoofing, space padding, or disguised headers"""
+    suspicious_reports = []
+    ext_info = analyze_file_extension(file_path)
+
+    if ext_info["has_rlo"]:
+        suspicious_reports.append(
+            "CRITICAL: Right-to-Left Override (RLO) character detected! The file extension is reversed to deceive Windows users."
+        )
+
+    if ext_info["has_space_padding"]:
+        suspicious_reports.append(
+            "CRITICAL: Space padding detected before the extension to hide the real executable extension off-screen."
+        )
+
+    if ext_info["is_double_ext"]:
+        suspicious_reports.append(
+            f"Dangerous double extension: Apparent extension '{ext_info['fake_ext']}' vs Real executable extension '{ext_info['real_ext']}'!"
+        )
+
+    if ext_info["magic_mismatch"]:
+        suspicious_reports.append(
+            f"Extension Mismatch: True binary format is '{ext_info['magic_type']}' but file claims extension '{ext_info['real_ext']}'!"
+        )
 
     return suspicious_reports
 
@@ -600,7 +648,7 @@ def scan_image_security(file_path):
     return results
 
 
-def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_res, disguises=None, image_info=None):
+def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_res, disguises=None, image_info=None, ext_info=None):
     """Print formatted security scan summary report"""
     print(f"\n{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.MAGENTA}{'SECURITY SCAN ANALYSIS REPORT':^70}{Colors.RESET}")
@@ -615,8 +663,29 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
         print(f"  • MD5   : {Colors.WHITE}{hashes['md5']}{Colors.RESET}")
         print(f"  • SHA256: {Colors.WHITE}{hashes['sha256']}{Colors.RESET}")
 
-    # 2. Hidden items & Disguise Detection
-    print(f"\n{Colors.BOLD}{Colors.CYAN}[2] HIDDEN FILES & DIRECTORIES CHECK:{Colors.RESET}")
+    # 2. File Extension & Disguise Analysis
+    if ext_info:
+        print(f"\n{Colors.BOLD}{Colors.CYAN}[2] FILE EXTENSION & SPOOFING ANALYSIS:{Colors.RESET}")
+        print(f"  • Full Name on Disk  : {Colors.WHITE}{ext_info['full_name']}{Colors.RESET}")
+        
+        if ext_info["is_double_ext"]:
+            print(f"  • True Real Extension: {Colors.RED}{ext_info['real_ext']} (EXECUTABLE PAYLOAD){Colors.RESET}")
+            print(f"  • Fake / Visible Ext : {Colors.YELLOW}{ext_info['fake_ext']}{Colors.RESET} (Deceptive disguise)")
+        else:
+            print(f"  • True Real Extension: {Colors.GREEN}{ext_info['real_ext']}{Colors.RESET}")
+
+        print(f"  • Detected Binary Header: {Colors.WHITE}{ext_info['magic_type']}{Colors.RESET}")
+
+        if ext_info.get("has_rlo"):
+            print(f"  {Colors.RED}🚨 RLO Spoofing Detected: Right-to-Left Override character reverses file extension!{Colors.RESET}")
+        if ext_info.get("has_space_padding"):
+            print(f"  {Colors.RED}🚨 Space Padding Detected: Long spaces used to push executable extension off-screen!{Colors.RESET}")
+        if ext_info.get("magic_mismatch"):
+            print(f"  {Colors.RED}🚨 Mismatch Detected: True format is '{ext_info['magic_type']}' but extension claims '{ext_info['real_ext']}'!{Colors.RESET}")
+
+    # 3. Hidden items & Disguise Detection
+    sec_num = 3 if ext_info else 2
+    print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] HIDDEN FILES & DIRECTORIES CHECK:{Colors.RESET}")
     
     has_hidden = False
     if hidden_info:
@@ -654,14 +723,15 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
         for d in disguises:
             print(f"    - {d}")
 
-    if not has_hidden:
+    if not has_hidden and not (ext_info and (ext_info.get("is_double_ext") or ext_info.get("has_rlo") or ext_info.get("magic_mismatch"))):
         print(f"  {Colors.GREEN}✓ No hidden files, hidden directories, or suspicious disguises found.{Colors.RESET}")
 
-    # 3. Image Security Inspection (if applicable)
+    # 4. Image Security Inspection (if applicable)
     has_image_threat = False
     has_image_warning = False
     if image_info and image_info.get("is_image"):
-        print(f"\n{Colors.BOLD}{Colors.CYAN}[3] IMAGE SECURITY & STEGANOGRAPHY CHECK:{Colors.RESET}")
+        sec_num += 1
+        print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] IMAGE SECURITY & STEGANOGRAPHY CHECK:{Colors.RESET}")
         print(f"  • Format: {Colors.WHITE}{image_info.get('format_detected')}{Colors.RESET}")
         
         threats = image_info.get("threats", [])
@@ -682,8 +752,8 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
         if not threats and not warnings:
             print(f"  {Colors.GREEN}✓ Clean image structure. No appended payloads or embedded scripts found.{Colors.RESET}")
 
-    # 4. Windows Defender Result
-    sec_num = 4 if (image_info and image_info.get("is_image")) else 3
+    # 5. Windows Defender Result
+    sec_num += 1
     print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] OFFLINE SCAN (WINDOWS DEFENDER):{Colors.RESET}")
     if defender_res.get("supported"):
         if defender_res.get("clean") is True:
@@ -697,7 +767,7 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
     else:
         print(f"  {Colors.YELLOW}ℹ {defender_res.get('message', 'Unavailable')}{Colors.RESET}")
 
-    # 5. VirusTotal Result
+    # 6. VirusTotal Result
     sec_num += 1
     print(f"\n{Colors.BOLD}{Colors.CYAN}[{sec_num}] ONLINE LOOKUP (VIRUSTOTAL):{Colors.RESET}")
     if vt_res.get("has_api") and vt_res.get("found"):
@@ -730,18 +800,20 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
     is_malicious = (
         (defender_res.get("clean") is False) or
         (vt_res.get("has_api") and vt_res.get("malicious", 0) > 0) or
-        has_image_threat
+        has_image_threat or
+        (ext_info and (ext_info.get("has_rlo") or ext_info.get("magic_mismatch")))
     )
     is_warning = (
         has_hidden or 
         (vt_res.get("has_api") and vt_res.get("suspicious", 0) > 0) or
-        has_image_warning
+        has_image_warning or
+        (ext_info and ext_info.get("is_double_ext"))
     )
 
     if is_malicious:
         print(f"  {Colors.BOLD}{Colors.RED}⛔ DANGER: The file contains VIRUS / MALWARE / DANGEROUS PAYLOAD! Do NOT open or execute this file.{Colors.RESET}")
     elif is_warning:
-        print(f"  {Colors.BOLD}{Colors.YELLOW}⚠ WARNING: Hidden items, steganography or suspicious extensions detected. Inspect carefully before opening.{Colors.RESET}")
+        print(f"  {Colors.BOLD}{Colors.YELLOW}⚠ WARNING: Hidden items, double extensions or steganography detected. Inspect carefully before opening.{Colors.RESET}")
     else:
         print(f"  {Colors.BOLD}{Colors.GREEN}✅ SAFE: No security threats or hidden items detected.{Colors.RESET}")
     print(f"{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}\n")
@@ -783,7 +855,9 @@ def scan_target(target, api_key=None):
                 hidden_info=hidden_info,
                 defender_res=defender_res,
                 vt_res={"message": "Cannot query entire directories on VirusTotal. Archive the folder to calculate a hash."},
-                disguises=None
+                disguises=None,
+                image_info=None,
+                ext_info=None
             )
             return
 
@@ -792,7 +866,8 @@ def scan_target(target, api_key=None):
         print(f"{Colors.BLUE}[*] Computing file hashes (MD5, SHA256)...{Colors.RESET}")
         hashes = calculate_hashes(file_path)
 
-        # Check for disguise / double extensions
+        # File Extension & Disguise analysis
+        ext_info = analyze_file_extension(file_path)
         disguises = check_disguised_file(file_path)
 
         # Deep Image Security Scan (if image format or extension)
@@ -823,7 +898,8 @@ def scan_target(target, api_key=None):
             defender_res=defender_res,
             vt_res=vt_res,
             disguises=disguises,
-            image_info=image_info
+            image_info=image_info,
+            ext_info=ext_info
         )
 
     finally:
@@ -833,6 +909,65 @@ def scan_target(target, api_key=None):
                 shutil.rmtree(temp_dir)
             except Exception:
                 pass
+
+
+def manage_windows_extension_settings():
+    """View and toggle Windows Explorer settings for displaying file extensions and hidden files"""
+    if sys.platform != "win32":
+        print(f"{Colors.YELLOW}[!] This setting is only available on Windows.{Colors.RESET}")
+        return
+
+    import winreg
+    reg_path = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path, 0, winreg.KEY_READ)
+        hide_ext, _ = winreg.QueryValueEx(key, "HideFileExt")
+        hidden, _ = winreg.QueryValueEx(key, "Hidden")
+        show_super_hidden, _ = winreg.QueryValueEx(key, "ShowSuperHidden")
+        winreg.CloseKey(key)
+    except Exception:
+        hide_ext, hidden, show_super_hidden = 1, 2, 0
+
+    print(f"\n{Colors.BOLD}{Colors.CYAN}--- WINDOWS FILE EXTENSION & HIDDEN FILES SETTINGS ---{Colors.RESET}")
+    print(f"  • File Extensions Visibility : {Colors.RED + 'HIDDEN (DANGEROUS)' if hide_ext == 1 else Colors.GREEN + 'ALWAYS VISIBLE (SAFE)'}{Colors.RESET}")
+    print(f"  • Hidden Files & Folders     : {Colors.GREEN + 'VISIBLE' if hidden == 1 else Colors.YELLOW + 'HIDDEN'}{Colors.RESET}")
+    print(f"  • Protected System Files     : {Colors.GREEN + 'VISIBLE' if show_super_hidden == 1 else Colors.YELLOW + 'HIDDEN'}{Colors.RESET}")
+    print("\nRecommendations:")
+    print("  Showing file extensions helps you see fake extensions (e.g. photo.jpg.exe) directly in File Explorer.")
+    print("  [1] Enable ALWAYS SHOW file extensions & show hidden files (Recommended)")
+    print("  [2] Revert to Windows default (Hide file extensions)")
+    print("  [0] Back to Main Menu")
+
+    choice = input(f"\n{Colors.CYAN}Select option (1/2/0): {Colors.RESET}").strip()
+    if choice == "1":
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path, 0, winreg.KEY_WRITE)
+            winreg.SetValueEx(key, "HideFileExt", 0, winreg.REG_DWORD, 0)
+            winreg.SetValueEx(key, "Hidden", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(key, "ShowSuperHidden", 0, winreg.REG_DWORD, 1)
+            winreg.CloseKey(key)
+
+            # Refresh Windows Explorer live
+            import ctypes
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, 0, 0)
+            print(f"{Colors.GREEN}[✓] Successfully enabled! File extensions and hidden files are now ALWAYS visible in File Explorer.{Colors.RESET}")
+        except Exception as e:
+            print(f"{Colors.RED}[✗] Failed to update Windows registry: {e}{Colors.RESET}")
+
+    elif choice == "2":
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path, 0, winreg.KEY_WRITE)
+            winreg.SetValueEx(key, "HideFileExt", 0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(key, "Hidden", 0, winreg.REG_DWORD, 2)
+            winreg.SetValueEx(key, "ShowSuperHidden", 0, winreg.REG_DWORD, 0)
+            winreg.CloseKey(key)
+
+            import ctypes
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, 0, 0)
+            print(f"{Colors.YELLOW}[✓] Reverted to Windows default settings.{Colors.RESET}")
+        except Exception as e:
+            print(f"{Colors.RED}[✗] Failed to update Windows registry: {e}{Colors.RESET}")
 
 
 def manage_api_key(config):
@@ -876,9 +1011,10 @@ def main():
         print(f"{Colors.BOLD}Options:{Colors.RESET}")
         print(f"  [1] Paste Download Link (URL) or File/Directory Path to scan")
         print(f"  [2] Configure VirusTotal API Key {vt_status}")
+        print(f"  [3] Windows Settings: Always Show File Extensions & Hidden Files")
         print(f"  [0] Exit")
         
-        choice = input(f"\n{Colors.CYAN}Select an option (1/2/0): {Colors.RESET}").strip()
+        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/0): {Colors.RESET}").strip()
 
         if choice == "1":
             target = input(f"\n{Colors.BOLD}Enter URL or File/Directory Path:{Colors.RESET} ").strip()
@@ -886,6 +1022,8 @@ def main():
                 scan_target(target, api_key=api_key)
         elif choice == "2":
             manage_api_key(config)
+        elif choice == "3":
+            manage_windows_extension_settings()
         elif choice == "0":
             print(f"\n{Colors.GREEN}Thank you for using the scanner! Goodbye.{Colors.RESET}")
             break
@@ -901,3 +1039,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}[!] Execution interrupted by user.{Colors.RESET}")
         sys.exit(0)
+
