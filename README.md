@@ -33,30 +33,36 @@ A powerful, lightweight Python security tool designed to scan download URLs, loc
 - **Full Alphanumeric Brute Force:** Generates character combinations with multithreaded worker pools.
 - **Instant Unlocked Scan:** Automatically passes recovered passwords directly into the security engine to audit inside files.
 
-### 5. 🎭 File Extension Analysis & Hidden Extension Unhiding
+### 5. ☣️ Ransomware Identification & Official Decryptor Finder
+- **Strain & Family Fingerprinting:** Identifies ransomware infections by cross-referencing encrypted extensions, ransom notes (`_readme.txt`, `restore-my-files.txt`, `@Please_Read_Me@.txt`), and Shannon data entropy.
+- **Supported Families:** STOP/Djvu, LockBit (2.0/3.0/Black), WannaCry, GandCrab, REvil/Sodinokibi, Phobos/CrySiS/Dharma, Babuk, TeslaCrypt, CryptXXX, CoinVault, Conti, Jigsaw.
+- **Verified Free Decryptor Links:** Instantly provides official, free decryption tools from **No More Ransom (Europol)**, **Kaspersky**, **Emsisoft**, **Bitdefender**, **Avast**, and **Cisco Talos**.
+- **Incident Response Playbook:** Crucial emergency instructions on machine isolation, sample preservation, and avoiding ransom payments.
+
+### 6. 🎭 File Extension Analysis & Hidden Extension Unhiding
 - **True vs Deceptive Extension Analysis:** Unmasks hidden real extensions (e.g. `document.pdf.exe` where `.pdf` is a disguise).
 - **Advanced Spoofing Detection:** Detects Right-to-Left Override (RLO `\u202E`) Unicode attacks and space-padding tricks used to push `.exe` extensions off-screen.
 - **Magic Bytes Validation:** Cross-checks actual file binary headers against declared extensions to catch renamed malware.
 - **1-Click Windows Setting (Unhide Extensions):** Built-in system tweak option to permanently reveal file extensions and hidden files across Windows File Explorer.
 
-### 6. 💻 IT Project Codebase Security & SAST Audit
+### 7. 💻 IT Project Codebase Security & SAST Audit
 - **Multi-Language Support:** Scans Python, JavaScript, TypeScript, PHP, Java, Go, C/C++, C#, Rust, Shell scripts, SQL, and configuration files (`.env`, `.json`, `.yml`).
 - **Secret & Credential Leak Detection:** Detects hardcoded AWS keys, GitHub tokens, Google API keys, OpenAI keys, Stripe secrets, private SSH keys, and database passwords (with automatic sensitive string masking in reports).
 - **Vulnerability & Code Injection Detection:** Identifies Remote Code Execution (`eval()`, `exec()`, `os.system()`, `shell=True`), SQL Injection, Insecure Deserialization (`pickle`, unsafe YAML), React/DOM XSS, and weak cryptography.
 - **Actionable Remediation & Markdown Export:** Provides exact file locations, line numbers, code snippets, severity ratings (CRITICAL / HIGH / MEDIUM / LOW), and generates a structured `code_security_audit.md` report.
 
-### 7. 🖼️ Deep Image Security & Steganography Analysis
+### 8. 🖼️ Deep Image Security & Steganography Analysis
 - **Supported Formats:** JPG/JPEG, PNG, GIF, BMP, WEBP, SVG, TIFF, PSD.
 - **Steganography & Trailing Payloads:** Checks for unauthorized data appended past standard End-of-Image markers (`EOI / IEND / trailer`).
 - **Polyglot Detection:** Detects embedded executables (`MZ/PE`, `ELF`) or archives (`RarJPEG`, Zip-in-PNG) hidden within images.
 - **SVG Vector Security:** Scans for Cross-Site Scripting (XSS), malicious JavaScript (`<script>`, `onload=`, `onerror=`, `javascript:`), and XML External Entity (`XXE`) exploits.
 - **WebShell Detection:** Identifies embedded PHP, eval, PowerShell, or command strings inside image metadata.
 
-### 8. 🔍 Dual-Layer Antivirus Scanning
+### 9. 🔍 Dual-Layer Antivirus Scanning
 - **Offline (Free & Native):** Directly integrates with the built-in **Windows Defender** engine (`MpCmdRun.exe`).
 - **Online (VirusTotal):** Computes `MD5` and `SHA256` hashes to query the VirusTotal v3 API or generate direct report URLs.
 
-### 9. 🚀 Automated GitHub Synchronization
+### 10. 🚀 Automated GitHub Synchronization
 - Push updates directly to GitHub via `github_service.py` or 1-click batch scripts.
 - Supports scheduled background pushes and secure token authentication via `.env`.
 

@@ -22,6 +22,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 import json
 import time
+import math
 import string
 import itertools
 import threading
@@ -967,6 +968,334 @@ def scan_archive_contents(archive_path, password=None):
             results["error"] = f"Failed to read TAR archive: {e}"
 
     return results
+
+
+# Comprehensive database of known Ransomware families, extensions, notes, and official free decryptors
+RANSOMWARE_DATABASE = [
+    {
+        "family": "STOP / Djvu",
+        "extensions": [
+            ".djvu", ".djvuq", ".djvur", ".rumba", ".promorad", ".gero", ".hese", ".seto",
+            ".meds", ".domn", ".coos", ".npph", ".derp", ".mkos", ".topos", ".repp", ".noas",
+            ".kuub", ".reha", ".nosu", ".reco", ".bora", ".rtk", ".bbbw", ".bbtv", ".bbcw",
+            ".eijy", ".vveo", ".tuis", ".bbyy", ".bbxx", ".tasa", ".sspq", ".wuiq", ".mzlq",
+            ".pizd", ".moqs", ".zfdv", ".peet", ".moba", ".boop", ".carote", ".redmat",
+            ".hhjk", ".gujd", ".gash", ".kuus", ".coot", ".mdfv", ".werd", ".zaki"
+        ],
+        "notes": ["_readme.txt", "readme.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Emsisoft Decryptor for STOP/Djvu (For Offline Keys)",
+        "decryptor_url": "https://www.emsisoft.com/en/ransomware-decryption/stop-djvu/",
+        "vendor": "Emsisoft & No More Ransom",
+        "notes_info": "Decryptable if encrypted with an offline key (key ID ends with 't1'). If encrypted with online key, backup files and wait for server key leaks."
+    },
+    {
+        "family": "LockBit (LockBit 2.0 / 3.0 / Black)",
+        "extensions": [".lockbit", ".abcd", ".lockbit3", ".lb3", ".lockbit_recovery"],
+        "notes": ["restore-my-files.txt", "lockbit_readme.txt", "readme.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Bitdefender & Europol LockBit Decryption Tool",
+        "decryptor_url": "https://www.nomoreransom.org/en/decryption-tools.html",
+        "vendor": "Bitdefender / Europol / FBI (Operation Cronos)",
+        "notes_info": "Law enforcement seized LockBit infrastructure, releasing free decryption keys for multiple victim groups."
+    },
+    {
+        "family": "WannaCry / WanaCrypt0r",
+        "extensions": [".wnry", ".wncry", ".wcry"],
+        "notes": ["@Please_Read_Me@.txt", "@WanaDecryptor@.exe.lnk"],
+        "decryptor_available": True,
+        "decryptor_name": "Wanakiwi / WannaKey Decryptor",
+        "decryptor_url": "https://github.com/gentilkiwi/wanakiwi",
+        "vendor": "Benjamin Delpy (gentilkiwi) / No More Ransom",
+        "notes_info": "Recovers prime numbers from Windows memory if the infected PC has not been restarted."
+    },
+    {
+        "family": "GandCrab (v1 to v5.2)",
+        "extensions": [".GDCB", ".CRAB", ".KRAB", ".gdcbc"],
+        "notes": ["KRAB-DECRYPT.txt", "CRAB-DECRYPT.txt", "GDCB-DECRYPT.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Bitdefender GandCrab Decryption Tool (All Versions)",
+        "decryptor_url": "https://www.bitdefender.com/blog/labs/gandcrab-ransomware-decryption-tool-available-now/",
+        "vendor": "Bitdefender / Romanian Police / Europol",
+        "notes_info": "Full free decryption available for all GandCrab versions 1, 4, 5, 5.0.4 - 5.2."
+    },
+    {
+        "family": "REvil / Sodinokibi",
+        "extensions": [".sodinokibi", ".revil"],
+        "notes": ["*-readme.txt", "readme.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Bitdefender REvil / Sodinokibi Universal Decryptor",
+        "decryptor_url": "https://www.bitdefender.com/blog/labs/bitdefender-offers-free-universal-decryptor-for-revil-sodinokibi-ransomware/",
+        "vendor": "Bitdefender / International Law Enforcement",
+        "notes_info": "Universal decryptor available for victims affected before the operator takedown."
+    },
+    {
+        "family": "Phobos / CrySiS / Dharma",
+        "extensions": [".phobos", ".eking", ".eight", ".dewar", ".actin", ".adame", ".help", ".dharma", ".cezar", ".arrow", ".wallet", ".bip"],
+        "notes": ["info.txt", "info.hta", "FILES ENCRYPTED.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Cisco Talos / Avast / Kaspersky CrySiS Decryptor",
+        "decryptor_url": "https://noransom.kaspersky.com/",
+        "vendor": "Kaspersky / Avast / Cisco Talos",
+        "notes_info": "Master keys leaked for CrySiS/Dharma. Phobos decryption available via security researchers."
+    },
+    {
+        "family": "Babuk / Babyk",
+        "extensions": [".babyk", ".babuk"],
+        "notes": ["How To Restore Your Files.txt", "readme.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Avast Babuk Decryption Tool",
+        "decryptor_url": "https://www.avast.com/ransomware-decryption-tools#babuk",
+        "vendor": "Avast Threat Labs",
+        "notes_info": "Decryptor available after source code and master keys were leaked."
+    },
+    {
+        "family": "TeslaCrypt (v1, v2, v3, v4)",
+        "extensions": [".ecc", ".ezz", ".exx", ".xyz", ".zzz", ".aaa", ".micro", ".ttbl"],
+        "notes": ["Recovery_file.txt", "help_recover_instructions+*.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "TeslaDecoder (ESET / Cisco)",
+        "decryptor_url": "https://www.talosintelligence.com/teslacrypt_tool",
+        "vendor": "Cisco Talos / ESET",
+        "notes_info": "Master decryption key released by developers when the operation shut down."
+    },
+    {
+        "family": "CryptXXX (v1, v2, v3)",
+        "extensions": [".crypt", ".cryp1", ".crypz"],
+        "notes": ["de_crypt_readme.txt", "de_crypt_readme.html"],
+        "decryptor_available": True,
+        "decryptor_name": "Kaspersky RannohDecryptor",
+        "decryptor_url": "https://media.kaspersky.com/utilities/VirusUtilities/EN/rannohdecryptor.zip",
+        "vendor": "Kaspersky",
+        "notes_info": "Free decryption utility available from Kaspersky."
+    },
+    {
+        "family": "CoinVault / Bitcryptor",
+        "extensions": [".cvault"],
+        "notes": ["CoinVault.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Kaspersky CoinVault Decryptor",
+        "decryptor_url": "https://noransom.kaspersky.com/",
+        "vendor": "Kaspersky / Dutch National High Tech Crime Unit",
+        "notes_info": "All decryption keys recovered during law enforcement raid."
+    },
+    {
+        "family": "Conti",
+        "extensions": [".CONTI", ".conti"],
+        "notes": ["readme.txt", "CONTI_README.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Prodaft & Carbon Black Conti Decryptor",
+        "decryptor_url": "https://www.nomoreransom.org/en/decryption-tools.html",
+        "vendor": "Prodaft / VMware Carbon Black",
+        "notes_info": "Decryption available for several leaked variant keychains."
+    },
+    {
+        "family": "Jigsaw Ransomware",
+        "extensions": [".fun", ".gws", ".btc", ".game"],
+        "notes": ["dr.jigsaw.txt"],
+        "decryptor_available": True,
+        "decryptor_name": "Emsisoft Jigsaw Decryptor",
+        "decryptor_url": "https://www.emsisoft.com/en/ransomware-decryption/jigsaw/",
+        "vendor": "Emsisoft",
+        "notes_info": "Full free decrypter available for all Jigsaw variants."
+    }
+]
+
+
+def calculate_entropy(data_bytes):
+    """Calculate Shannon entropy of byte data (0.0 to 8.0). High entropy (> 7.5) indicates encryption/packing."""
+    if not data_bytes:
+        return 0.0
+    entropy = 0.0
+    length = len(data_bytes)
+    counts = {}
+    for b in data_bytes:
+        counts[b] = counts.get(b, 0) + 1
+    for count in counts.values():
+        p_x = count / length
+        entropy += - p_x * math.log2(p_x)
+    return entropy
+
+
+def identify_ransomware(target_path):
+    """
+    Identify ransomware strain by inspecting file extensions, ransom notes, and file entropy.
+    Locates verified official free decryptors from No More Ransom, Kaspersky, Emsisoft, Bitdefender, Avast.
+    """
+    is_on_disk = os.path.exists(target_path)
+    is_dir = os.path.isdir(target_path) if is_on_disk else False
+
+    report = {
+        "target_path": target_path,
+        "is_directory": is_dir,
+        "suspected_ransomware": False,
+        "family": "Unknown / Clean",
+        "confidence": "None",
+        "file_entropy": None,
+        "ransom_notes_found": [],
+        "encrypted_extensions_found": set(),
+        "decryptor_available": False,
+        "decryptor_name": None,
+        "decryptor_url": None,
+        "vendor": None,
+        "notes_info": None,
+        "recommended_action": []
+    }
+
+    # Helper to check file extension
+    files_to_check = []
+    dir_to_search_notes = target_path if is_dir else os.path.dirname(target_path)
+
+    if is_dir:
+        for root, _, files in os.walk(target_path):
+            for f in files:
+                files_to_check.append(os.path.join(root, f))
+                if len(files_to_check) >= 50:
+                    break
+            if len(files_to_check) >= 50:
+                break
+    else:
+        files_to_check = [target_path]
+
+    # Search for known ransom notes in directory
+    known_note_patterns = [
+        r"(?i)^_readme\.txt$", r"(?i)^readme\.txt$", r"(?i)^how_to_decrypt.*\.txt$",
+        r"(?i)^restore_files.*\.txt$", r"(?i)^help_decrypt.*\.txt$", r"(?i)^@please_read_me@.*",
+        r"(?i)^lockbit_readme.*\.txt$", r"(?i)^.*-readme\.txt$", r"(?i)^files\s+encrypted\.txt$"
+    ]
+
+    try:
+        if os.path.exists(dir_to_search_notes):
+            for entry in os.listdir(dir_to_search_notes):
+                for pat in known_note_patterns:
+                    if re.match(pat, entry):
+                        report["ransom_notes_found"].append(os.path.join(dir_to_search_notes, entry))
+                        report["suspected_ransomware"] = True
+                        break
+    except Exception:
+        pass
+
+    # Collect extensions & measure entropy
+    matched_family = None
+
+    for fpath in files_to_check:
+        fname = os.path.basename(fpath).lower()
+        ext = os.path.splitext(fname)[1]
+
+        if ext:
+            report["encrypted_extensions_found"].add(ext)
+
+        # Match against known Ransomware Database
+        for entry in RANSOMWARE_DATABASE:
+            for r_ext in entry["extensions"]:
+                if fname.endswith(r_ext.lower()):
+                    matched_family = entry
+                    report["suspected_ransomware"] = True
+                    report["confidence"] = "HIGH (Signature Match)"
+                    break
+            if matched_family:
+                break
+        if matched_family:
+            break
+
+    # If not matched by extension, test file entropy on first file
+    if files_to_check:
+        try:
+            with open_file_safe(files_to_check[0], "rb") as f_in:
+                sample_data = f_in.read(65536)
+            if sample_data:
+                entropy = calculate_entropy(sample_data)
+                report["file_entropy"] = entropy
+                if entropy > 7.5 and not files_to_check[0].lower().endswith((".zip", ".rar", ".7z", ".gz", ".png", ".jpg", ".mp4", ".mkv")):
+                    report["suspected_ransomware"] = True
+                    if not matched_family:
+                        report["confidence"] = "MEDIUM (High Entropy / Encrypted Data Structure)"
+        except Exception:
+            pass
+
+    if matched_family:
+        report["family"] = matched_family["family"]
+        report["decryptor_available"] = matched_family["decryptor_available"]
+        report["decryptor_name"] = matched_family["decryptor_name"]
+        report["decryptor_url"] = matched_family["decryptor_url"]
+        report["vendor"] = matched_family["vendor"]
+        report["notes_info"] = matched_family["notes_info"]
+    elif report["suspected_ransomware"]:
+        report["family"] = "Suspected Unknown / Custom Ransomware Variant"
+
+    return report
+
+
+def print_ransomware_report(report):
+    """Print formatted terminal report for Ransomware identification and decryptor guidance"""
+    print(f"\n{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}{'RANSOMWARE IDENTIFICATION & DECRYPTOR LOCATOR':^70}{Colors.RESET}")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}")
+
+    if report.get("error"):
+        print(f"{Colors.RED}[✗] {report['error']}{Colors.RESET}")
+        return
+
+    print(f"\n{Colors.BOLD}{Colors.CYAN}[1] ANALYSIS TARGET & EVIDENCE:{Colors.RESET}")
+    print(f"  • Path Analyzed     : {Colors.WHITE}{report['target_path']}{Colors.RESET}")
+    if report["file_entropy"] is not None:
+        entropy_color = Colors.RED if report["file_entropy"] > 7.5 else Colors.GREEN
+        print(f"  • File Data Entropy : {entropy_color}{report['file_entropy']:.2f} / 8.00{Colors.RESET} {'(Encrypted / High Randomness)' if report['file_entropy'] > 7.5 else '(Normal Structure)'}")
+
+    if report["ransom_notes_found"]:
+        print(f"  {Colors.RED}🚨 Ransom Note(s) Detected in Directory:{Colors.RESET}")
+        for note in report["ransom_notes_found"][:3]:
+            print(f"    - {note}")
+
+    if report["encrypted_extensions_found"]:
+        print(f"  • Detected Extensions: {Colors.YELLOW}{', '.join(sorted(list(report['encrypted_extensions_found']))[:8])}{Colors.RESET}")
+
+    # 2. Ransomware Strain Identification
+    print(f"\n{Colors.BOLD}{Colors.CYAN}[2] RANSOMWARE STRAIN IDENTIFICATION:{Colors.RESET}")
+    if report["suspected_ransomware"]:
+        print(f"  • Ransomware Family : {Colors.RED}{Colors.BOLD}{report['family']}{Colors.RESET}")
+        print(f"  • Detection Match   : {Colors.WHITE}{report['confidence']}{Colors.RESET}")
+    else:
+        print(f"  {Colors.GREEN}✓ No ransomware extensions, high entropy encryption, or ransom notes detected.{Colors.RESET}")
+
+    # 3. Decryptor Availability & Solution
+    print(f"\n{Colors.BOLD}{Colors.CYAN}[3] OFFICIAL DECRYPTOR AVAILABILITY:{Colors.RESET}")
+    if report["decryptor_available"]:
+        print(f"  {Colors.GREEN}{Colors.BOLD}🎉 FREE OFFICIAL DECRYPTOR IS AVAILABLE!{Colors.RESET}")
+        print(f"  • Tool Name : {Colors.WHITE}{report['decryptor_name']}{Colors.RESET}")
+        print(f"  • Provider  : {Colors.CYAN}{report['vendor']}{Colors.RESET}")
+        print(f"  • Download  : {Colors.BLUE}{report['decryptor_url']}{Colors.RESET}")
+        if report["notes_info"]:
+            print(f"  • Guidance  : {Colors.YELLOW}{report['notes_info']}{Colors.RESET}")
+    elif report["suspected_ransomware"]:
+        print(f"  {Colors.YELLOW}⚠ No single universal decryptor is bundled for this specific strain yet.{Colors.RESET}")
+        print(f"  🔗 Upload your ransom note & sample file to {Colors.BLUE}ID Ransomware{Colors.RESET} to identify exact keys:")
+        print(f"     👉 {Colors.CYAN}https://id-ransomware.malwarehunterteam.com/{Colors.RESET}")
+        print(f"  🔗 Search the global {Colors.BLUE}No More Ransom Project{Colors.RESET} decryption repository:")
+        print(f"     👉 {Colors.CYAN}https://www.nomoreransom.org/en/decryption-tools.html{Colors.RESET}")
+    else:
+        print(f"  {Colors.GREEN}✓ File is not encrypted by ransomware.{Colors.RESET}")
+
+    # 4. Critical Incident Response Rules
+    print(f"\n{Colors.BOLD}{Colors.MAGENTA}{'-'*70}{Colors.RESET}")
+    print(f"{Colors.BOLD}[*] CRITICAL RANSOMWARE INCIDENT RESPONSE ADVICE:{Colors.RESET}")
+    print(f"  1. {Colors.YELLOW}ISOLATE THE MACHINE:{Colors.RESET} Disconnect Wi-Fi and unplug network cables immediately to prevent lateral spread.")
+    print(f"  2. {Colors.YELLOW}NEVER PAY THE RANSOM:{Colors.RESET} Paying criminals guarantees nothing and finances further cyber attacks.")
+    print(f"  3. {Colors.YELLOW}PRESERVE ENCRYPTED FILES:{Colors.RESET} Keep encrypted copies safe; master keys for ransomware are frequently seized by law enforcement and published for free.")
+    print(f"{Colors.BOLD}{Colors.MAGENTA}{'='*70}{Colors.RESET}\n")
+
+
+def manage_ransomware_identifier():
+    """Interactive CLI menu for Ransomware Identification & Decryptor Locator"""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}--- RANSOMWARE IDENTIFIER & OFFICIAL DECRYPTOR FINDER ---{Colors.RESET}")
+    print("Supports STOP/Djvu, LockBit, WannaCry, GandCrab, REvil, Phobos/CrySiS, Babuk, Conti, TeslaCrypt, and more.")
+    target_path = input(f"\n{Colors.BOLD}Enter Encrypted File or Folder Path:{Colors.RESET} ").strip().strip('"').strip("'")
+    
+    if not target_path:
+        return
+
+    report = identify_ransomware(target_path)
+    print_ransomware_report(report)
 
 
 def scan_directory_hidden(dir_path):
@@ -1974,6 +2303,11 @@ def scan_target(target, api_key=None):
             if code_results.get("total_files_scanned", 0) > 0:
                 print_codebase_report(code_results)
 
+            # Check if directory contains ransomware notes or encrypted files
+            ransom_report = identify_ransomware(file_path)
+            if ransom_report.get("suspected_ransomware"):
+                print_ransomware_report(ransom_report)
+
             return
 
         # Target is a FILE
@@ -2016,6 +2350,11 @@ def scan_target(target, api_key=None):
             image_info=image_info,
             ext_info=ext_info
         )
+
+        # Check if single file is ransomware-encrypted
+        ransom_report = identify_ransomware(file_path)
+        if ransom_report.get("suspected_ransomware"):
+            print_ransomware_report(ransom_report)
 
     finally:
         # Clean up temporary downloaded file
@@ -2131,9 +2470,10 @@ def main():
         print(f"  [4] Windows Settings: Always Show File Extensions & Hidden Files")
         print(f"  [5] Access & Permissions: Request Administrator Elevation (Unlock Restricted Files)")
         print(f"  [6] Archive Password Recovery & Cracker (Unlock Protected ZIPs)")
+        print(f"  [7] Ransomware Identification & Free Decryptor Finder (STOP/Djvu, LockBit, etc.)")
         print(f"  [0] Exit")
         
-        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/4/5/6/0): {Colors.RESET}").strip()
+        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/4/5/6/7/0): {Colors.RESET}").strip()
 
         if choice == "1":
             target = input(f"\n{Colors.BOLD}Enter URL or File/Directory Path:{Colors.RESET} ").strip()
@@ -2153,6 +2493,8 @@ def main():
             elevate_to_admin()
         elif choice == "6":
             manage_password_cracker()
+        elif choice == "7":
+            manage_ransomware_identifier()
         elif choice == "0":
             print(f"\n{Colors.GREEN}Thank you for using the scanner! Goodbye.{Colors.RESET}")
             break
