@@ -130,13 +130,78 @@ def save_config(config):
         print(f"{Colors.YELLOW}[!] Failed to save configuration: {e}{Colors.RESET}")
 
 
+def is_admin():
+    """Check if the current process has Windows Administrator privileges"""
+    if sys.platform != "win32":
+        return os.geteuid() == 0 if hasattr(os, "geteuid") else False
+    try:
+        import ctypes
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except Exception:
+        return False
+
+
+def elevate_to_admin():
+    """Relaunch the scanner with elevated Administrator privileges on Windows"""
+    if sys.platform != "win32":
+        print(f"{Colors.YELLOW}[!] Privilege elevation via UAC is only available on Windows.{Colors.RESET}")
+        return
+
+    if is_admin():
+        print(f"{Colors.GREEN}[✓] The scanner is already running with Administrator privileges!{Colors.RESET}")
+        return
+
+    import ctypes
+    print(f"{Colors.CYAN}[*] Requesting Administrator privileges (UAC prompt will appear)...{Colors.RESET}")
+    try:
+        params = " ".join([f'"{arg}"' for arg in sys.argv])
+        ret = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, params, None, 1
+        )
+        if ret > 32:
+            print(f"{Colors.GREEN}[✓] Elevated process launched successfully.{Colors.RESET}")
+            sys.exit(0)
+        else:
+            print(f"{Colors.RED}[✗] Elevation cancelled or failed (Code {ret}).{Colors.RESET}")
+    except Exception as e:
+        print(f"{Colors.RED}[✗] Failed to request Administrator elevation: {e}{Colors.RESET}")
+
+
+def fix_permission_access(target_path):
+    """Attempt to grant read permissions for locked/restricted Windows files or folders"""
+    if sys.platform != "win32":
+        return False
+    try:
+        subprocess.run(["takeown", "/F", target_path, "/A"], capture_output=True, check=False)
+        res = subprocess.run(["icacls", target_path, "/grant", "*S-1-1-0:R", "/T", "/C", "/Q"], capture_output=True, check=False)
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def open_file_safe(file_path, mode="rb"):
+    """
+    Safely open a file on Windows even if it is in-use or has restricted permissions.
+    """
+    try:
+        return open(file_path, mode)
+    except PermissionError:
+        if sys.platform == "win32":
+            fix_permission_access(file_path)
+            try:
+                return open(file_path, mode)
+            except Exception:
+                pass
+        raise
+
+
 def calculate_hashes(file_path):
-    """Calculate MD5, SHA1, and SHA256 hashes of a file"""
+    """Calculate MD5, SHA1, and SHA256 hashes of a file safely"""
     md5 = hashlib.md5()
     sha1 = hashlib.sha1()
     sha256 = hashlib.sha256()
 
-    with open(file_path, "rb") as f:
+    with open_file_safe(file_path, "rb") as f:
         while chunk := f.read(65536):
             md5.update(chunk)
             sha1.update(chunk)
@@ -409,12 +474,13 @@ def inspect_image_bytes(content, filename):
     return results
 
 
-def scan_archive_contents(archive_path):
+def scan_archive_contents(archive_path, password=None):
     """
     Perform deep security analysis inside ZIP/TAR archives:
     1. Structural inspection (hidden files/folders, double extensions, zip-slip, zip bomb).
     2. Deep in-memory Codebase SAST & Leaked Secret scanning on all contained source code.
     3. Deep in-memory Image Security & Steganography scanning on all contained images.
+    4. Supports password-protected / encrypted archives (auto-tries common keys or user password).
     """
     results = {
         "is_archive": True,
@@ -429,6 +495,8 @@ def scan_archive_contents(archive_path):
         "zip_slip_files": [],
         "is_zip_bomb": False,
         "encrypted_files": [],
+        "decrypted_status": None,
+        "decrypted_password": None,
         "code_files_scanned": 0,
         "code_lines_scanned": 0,
         "code_findings": [],
@@ -460,6 +528,50 @@ def scan_archive_contents(archive_path):
                 infolist = zf.infolist()
                 results["all_entries_count"] = len(infolist)
 
+                # Check if archive has encrypted entries
+                encrypted_items = [it for it in infolist if (it.flag_bits & 0x1) and not it.is_dir()]
+                active_pwd_bytes = None
+
+                if encrypted_items:
+                    results["encrypted_files"] = [it.filename for it in encrypted_items]
+                    test_item = encrypted_items[0]
+
+                    # 1. Try candidate passwords (provided + common default list)
+                    candidates = []
+                    if password:
+                        candidates.append(password)
+                    candidates.extend(["", "123456", "password", "1234", "admin", "infected", "virus", "12345678", "root", "1111", "qwerty"])
+
+                    for cand in candidates:
+                        cand_bytes = cand.encode("utf-8") if cand else None
+                        try:
+                            with zf.open(test_item, pwd=cand_bytes) as f_test:
+                                f_test.read(32)
+                            active_pwd_bytes = cand_bytes
+                            results["decrypted_status"] = "SUCCESS"
+                            results["decrypted_password"] = cand if cand else "(Empty Password)"
+                            break
+                        except Exception:
+                            continue
+
+                    # 2. If still locked, prompt user interactively
+                    if active_pwd_bytes is None:
+                        print(f"\n{Colors.YELLOW}🔒 ARCHIVE IS PASSWORD-PROTECTED ({len(encrypted_items)} encrypted files detected).{Colors.RESET}")
+                        user_pwd = input(f"{Colors.CYAN}Enter archive password to decrypt & scan (or press Enter to skip): {Colors.RESET}").strip()
+                        if user_pwd:
+                            try:
+                                with zf.open(test_item, pwd=user_pwd.encode("utf-8")) as f_test:
+                                    f_test.read(32)
+                                active_pwd_bytes = user_pwd.encode("utf-8")
+                                results["decrypted_status"] = "SUCCESS"
+                                results["decrypted_password"] = user_pwd
+                                print(f"{Colors.GREEN}[✓] Password accepted! Archive unlocked successfully.{Colors.RESET}")
+                            except Exception:
+                                results["decrypted_status"] = "WRONG_PASSWORD"
+                                print(f"{Colors.RED}[✗] Incorrect password. Could not decrypt inside files.{Colors.RESET}")
+                        else:
+                            results["decrypted_status"] = "LOCKED_NO_PASSWORD"
+
                 for item in infolist:
                     filename = item.filename
                     results["total_uncompressed_bytes"] += item.file_size
@@ -469,10 +581,6 @@ def scan_archive_contents(archive_path):
                     norm_path = os.path.normpath(filename)
                     if norm_path.startswith("..") or norm_path.startswith("/") or norm_path.startswith("\\") or "../" in filename or "..\\" in filename:
                         results["zip_slip_files"].append(filename)
-
-                    # Check for password protection / encryption
-                    if item.flag_bits & 0x1:
-                        results["encrypted_files"].append(filename)
 
                     parts = [p for p in filename.replace("\\", "/").split("/") if p]
                     
@@ -501,66 +609,69 @@ def scan_archive_contents(archive_path):
 
                         # Deep Codebase SAST & Secret Scanning inside ZIP
                         if ext in CODE_EXTENSIONS or filename == ".env" or filename.startswith(".env."):
-                            # Skip excessively large files inside zip
-                            if item.file_size <= 5 * 1024 * 1024 and not (item.flag_bits & 0x1):
-                                try:
-                                    with zf.open(item) as f_in:
-                                        raw_data = f_in.read()
-                                    
-                                    text = raw_data.decode("utf-8", errors="ignore")
-                                    lines = text.splitlines()
-                                    results["code_files_scanned"] += 1
-                                    results["code_lines_scanned"] += len(lines)
+                            if item.file_size <= 5 * 1024 * 1024:
+                                is_encrypted = bool(item.flag_bits & 0x1)
+                                if not is_encrypted or active_pwd_bytes is not None:
+                                    try:
+                                        with zf.open(item, pwd=active_pwd_bytes) as f_in:
+                                            raw_data = f_in.read()
+                                        
+                                        text = raw_data.decode("utf-8", errors="ignore")
+                                        lines = text.splitlines()
+                                        results["code_files_scanned"] += 1
+                                        results["code_lines_scanned"] += len(lines)
 
-                                    for line_idx, line in enumerate(lines, start=1):
-                                        stripped_line = line.strip()
-                                        if not stripped_line or stripped_line.startswith(("#", "//", "/*", "*")):
-                                            if "PRIVATE KEY" not in stripped_line:
-                                                continue
+                                        for line_idx, line in enumerate(lines, start=1):
+                                            stripped_line = line.strip()
+                                            if not stripped_line or stripped_line.startswith(("#", "//", "/*", "*")):
+                                                if "PRIVATE KEY" not in stripped_line:
+                                                    continue
 
-                                        for rule in compiled_rules:
-                                            target_exts = rule.get("target_extensions")
-                                            if target_exts and ext not in target_exts:
-                                                continue
+                                            for rule in compiled_rules:
+                                                target_exts = rule.get("target_extensions")
+                                                if target_exts and ext not in target_exts:
+                                                    continue
 
-                                            match = rule["regex"].search(stripped_line)
-                                            if match:
-                                                matched_text = match.group(0)
-                                                snippet = stripped_line
-                                                if rule["category"] == "LEAKED_SECRET":
-                                                    snippet = snippet.replace(matched_text, mask_secret(matched_text))
+                                                match = rule["regex"].search(stripped_line)
+                                                if match:
+                                                    matched_text = match.group(0)
+                                                    snippet = stripped_line
+                                                    if rule["category"] == "LEAKED_SECRET":
+                                                        snippet = snippet.replace(matched_text, mask_secret(matched_text))
 
-                                                if len(snippet) > 120:
-                                                    snippet = snippet[:117] + "..."
+                                                    if len(snippet) > 120:
+                                                        snippet = snippet[:117] + "..."
 
-                                                finding = {
-                                                    "id": rule["id"],
-                                                    "file": f"[ZIP] {filename}",
-                                                    "line": line_idx,
-                                                    "severity": rule["severity"],
-                                                    "category": rule["category"],
-                                                    "title": rule["title"],
-                                                    "description": rule["description"],
-                                                    "snippet": snippet,
-                                                    "recommendation": rule["recommendation"]
-                                                }
-                                                results["code_findings"].append(finding)
-                                                results["summary"][rule["severity"]] += 1
-                                                results["summary"]["TOTAL"] += 1
-                                except Exception:
-                                    pass
+                                                    finding = {
+                                                        "id": rule["id"],
+                                                        "file": f"[ZIP] {filename}",
+                                                        "line": line_idx,
+                                                        "severity": rule["severity"],
+                                                        "category": rule["category"],
+                                                        "title": rule["title"],
+                                                        "description": rule["description"],
+                                                        "snippet": snippet,
+                                                        "recommendation": rule["recommendation"]
+                                                    }
+                                                    results["code_findings"].append(finding)
+                                                    results["summary"][rule["severity"]] += 1
+                                                    results["summary"]["TOTAL"] += 1
+                                    except Exception:
+                                        pass
 
                         # Deep Image Security & Steganography inside ZIP
                         elif ext in IMAGE_EXTENSIONS:
-                            if item.file_size <= 10 * 1024 * 1024 and not (item.flag_bits & 0x1):
-                                try:
-                                    with zf.open(item) as f_in:
-                                        raw_img = f_in.read()
-                                    img_report = inspect_image_bytes(raw_img, filename)
-                                    if img_report.get("threats") or img_report.get("warnings"):
-                                        results["image_findings"].append(img_report)
-                                except Exception:
-                                    pass
+                            if item.file_size <= 10 * 1024 * 1024:
+                                is_encrypted = bool(item.flag_bits & 0x1)
+                                if not is_encrypted or active_pwd_bytes is not None:
+                                    try:
+                                        with zf.open(item, pwd=active_pwd_bytes) as f_in:
+                                            raw_img = f_in.read()
+                                        img_report = inspect_image_bytes(raw_img, filename)
+                                        if img_report.get("threats") or img_report.get("warnings"):
+                                            results["image_findings"].append(img_report)
+                                    except Exception:
+                                        pass
 
                 # Check for Zip Bomb
                 if results["total_compressed_bytes"] > 0:
@@ -1444,7 +1555,14 @@ def print_report(target_name, file_size, hashes, hidden_info, defender_res, vt_r
                 print(f"    - [MALICIOUS PATH] {zs}")
 
         if encrypted_files:
-            print(f"  {Colors.YELLOW}ℹ Password-Protected / Encrypted Entries: {len(encrypted_files)} file(s){Colors.RESET}")
+            if hidden_info.get("decrypted_status") == "SUCCESS":
+                status_text = f"{Colors.GREEN}[UNLOCKED & DECRYPTED: '{hidden_info.get('decrypted_password')}']{Colors.RESET}"
+            elif hidden_info.get("decrypted_status") == "WRONG_PASSWORD":
+                status_text = f"{Colors.RED}[LOCKED: WRONG PASSWORD]{Colors.RESET}"
+            else:
+                status_text = f"{Colors.YELLOW}[LOCKED: PASSWORD REQUIRED]{Colors.RESET}"
+
+            print(f"  • Encrypted Entries : {len(encrypted_files)} password-protected file(s) -> {status_text}")
 
         if hidden_dirs:
             has_hidden = True
@@ -1802,15 +1920,17 @@ def main():
     while True:
         api_key = config.get("virustotal_api_key")
         vt_status = f"{Colors.GREEN}[Configured]{Colors.RESET}" if api_key else f"{Colors.YELLOW}[Not set - direct link provided]{Colors.RESET}"
+        admin_badge = f"{Colors.GREEN}[Administrator Mode: ACTIVE]{Colors.RESET}" if is_admin() else f"{Colors.YELLOW}[Standard Mode]{Colors.RESET}"
         
-        print(f"{Colors.BOLD}Options:{Colors.RESET}")
+        print(f"{Colors.BOLD}Options: {admin_badge}{Colors.RESET}")
         print(f"  [1] Paste Download Link (URL) or File/Directory Path to scan")
         print(f"  [2] Scan IT Project Codebase (Vulnerabilities, Leaked Secrets, SAST Audit)")
         print(f"  [3] Configure VirusTotal API Key {vt_status}")
         print(f"  [4] Windows Settings: Always Show File Extensions & Hidden Files")
+        print(f"  [5] Access & Permissions: Request Administrator Elevation (Unlock Restricted Files)")
         print(f"  [0] Exit")
         
-        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/4/0): {Colors.RESET}").strip()
+        choice = input(f"\n{Colors.CYAN}Select an option (1/2/3/4/5/0): {Colors.RESET}").strip()
 
         if choice == "1":
             target = input(f"\n{Colors.BOLD}Enter URL or File/Directory Path:{Colors.RESET} ").strip()
@@ -1826,6 +1946,8 @@ def main():
             manage_api_key(config)
         elif choice == "4":
             manage_windows_extension_settings()
+        elif choice == "5":
+            elevate_to_admin()
         elif choice == "0":
             print(f"\n{Colors.GREEN}Thank you for using the scanner! Goodbye.{Colors.RESET}")
             break

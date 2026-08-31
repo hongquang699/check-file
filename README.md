@@ -15,35 +15,41 @@ A powerful, lightweight Python security tool designed to scan download URLs, loc
 
 ### 2. 📦 Deep Archive & In-Memory Inspection (`.zip`, `.tar`, `.gz`)
 - **Zero-Extraction In-Memory Scanning:** Analyzes archive contents securely in memory without extracting hazardous files to disk.
+- **Password-Protected & Encrypted Archive Decryption:** Automatically detects encrypted entries, tries common candidate passwords, or securely prompts for an archive password to unlock and audit encrypted files.
 - **Hidden Items & Disguises Inside Archive:** Detects hidden dot-files (`.env`, `.hidden/`), dangerous executables, and deceptive double extensions inside archives.
 - **In-Archive Source Code SAST & Secret Leak Audit:** Automatically scans all source code and config files packed inside the ZIP for leaked API keys, credentials, SQL injection, RCE (`eval`, `exec`), and vulnerabilities.
 - **In-Archive Image Steganography Check:** Checks all embedded images for hidden payloads, polyglots, and SVG XSS.
 - **Zip Bomb & Zip Slip Protection:** Detects compression ratio anomalies (Zip Bomb) and directory traversal attack paths (Zip Slip `../`).
 
-### 3. 🎭 File Extension Analysis & Hidden Extension Unhiding
+### 3. 🔐 Permission Access & Administrator Elevation (UAC)
+- **Safe Non-Exclusive File Reader:** Bypasses in-use/locked file restrictions on Windows to scan running programs and active logs.
+- **Automated Permission Recovery:** Automatically takes ownership and grants read access (`icacls` / `takeown`) for permission-restricted files.
+- **1-Click Administrator Elevation:** Built-in menu option (`Option 5`) to seamlessly relaunch the scanner with elevated Administrator privileges via Windows UAC.
+
+### 4. 🎭 File Extension Analysis & Hidden Extension Unhiding
 - **True vs Deceptive Extension Analysis:** Unmasks hidden real extensions (e.g. `document.pdf.exe` where `.pdf` is a disguise).
 - **Advanced Spoofing Detection:** Detects Right-to-Left Override (RLO `\u202E`) Unicode attacks and space-padding tricks used to push `.exe` extensions off-screen.
 - **Magic Bytes Validation:** Cross-checks actual file binary headers against declared extensions to catch renamed malware.
 - **1-Click Windows Setting (Unhide Extensions):** Built-in system tweak option to permanently reveal file extensions and hidden files across Windows File Explorer.
 
-### 4. 💻 IT Project Codebase Security & SAST Audit
+### 5. 💻 IT Project Codebase Security & SAST Audit
 - **Multi-Language Support:** Scans Python, JavaScript, TypeScript, PHP, Java, Go, C/C++, C#, Rust, Shell scripts, SQL, and configuration files (`.env`, `.json`, `.yml`).
 - **Secret & Credential Leak Detection:** Detects hardcoded AWS keys, GitHub tokens, Google API keys, OpenAI keys, Stripe secrets, private SSH keys, and database passwords (with automatic sensitive string masking in reports).
 - **Vulnerability & Code Injection Detection:** Identifies Remote Code Execution (`eval()`, `exec()`, `os.system()`, `shell=True`), SQL Injection, Insecure Deserialization (`pickle`, unsafe YAML), React/DOM XSS, and weak cryptography.
 - **Actionable Remediation & Markdown Export:** Provides exact file locations, line numbers, code snippets, severity ratings (CRITICAL / HIGH / MEDIUM / LOW), and generates a structured `code_security_audit.md` report.
 
-### 5. 🖼️ Deep Image Security & Steganography Analysis
+### 6. 🖼️ Deep Image Security & Steganography Analysis
 - **Supported Formats:** JPG/JPEG, PNG, GIF, BMP, WEBP, SVG, TIFF, PSD.
 - **Steganography & Trailing Payloads:** Checks for unauthorized data appended past standard End-of-Image markers (`EOI / IEND / trailer`).
 - **Polyglot Detection:** Detects embedded executables (`MZ/PE`, `ELF`) or archives (`RarJPEG`, Zip-in-PNG) hidden within images.
 - **SVG Vector Security:** Scans for Cross-Site Scripting (XSS), malicious JavaScript (`<script>`, `onload=`, `onerror=`, `javascript:`), and XML External Entity (`XXE`) exploits.
 - **WebShell Detection:** Identifies embedded PHP, eval, PowerShell, or command strings inside image metadata.
 
-### 6. 🔍 Dual-Layer Antivirus Scanning
+### 7. 🔍 Dual-Layer Antivirus Scanning
 - **Offline (Free & Native):** Directly integrates with the built-in **Windows Defender** engine (`MpCmdRun.exe`).
 - **Online (VirusTotal):** Computes `MD5` and `SHA256` hashes to query the VirusTotal v3 API or generate direct report URLs.
 
-### 7. 🚀 Automated GitHub Synchronization
+### 8. 🚀 Automated GitHub Synchronization
 - Push updates directly to GitHub via `github_service.py` or 1-click batch scripts.
 - Supports scheduled background pushes and secure token authentication via `.env`.
 
