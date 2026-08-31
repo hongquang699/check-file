@@ -1,0 +1,8 @@
+# www.robotstxt.org/
+# Allow or disallow web crawlers / bots
+
+User-agent: *
+Disallow: /config.json
+Disallow: /tmp/
+Disallow: /.git/
+Allow: /
